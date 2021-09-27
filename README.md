@@ -2,10 +2,10 @@
 
 `libaslrmalloc` is a LD_PRELOADed library which replaces `malloc()`,
 `free()`, `realloc()` and `calloc()` from C library. The main design
-goal is not speed, memory consumption but to increase address space
-layout randomization (ASLR), hence the name. This is achieved by not
-trying to keep the pages together and also forcing the kernel to map
-pages at random addresses.
+goal is not performance or memory consumption but to increase address space
+layout randomization ([ASLR](https://en.wikipedia.org/wiki/Address_space_layout_randomization)), hence the name.
+This is achieved by not trying to keep the pages together, forcing the kernel to map
+pages at random addresses and unmapping old memory immediately when possible.
 
 It has the following features:
 * buggy
@@ -14,6 +14,8 @@ It has the following features:
 * trashes caches, slowing down the system
 * multithread unsafe
 * also buggy
+
+Reading the [design document](/DESIGN.md) may present more complete view.
 
 Examples:
 
