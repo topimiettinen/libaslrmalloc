@@ -1,4 +1,6 @@
 # libaslrmalloc
+[![Build CI](https://github.com/topimiettinen/libaslrmalloc/workflows/GitHub%20CI/badge.svg)](https://github.com/topimiettinen/libaslrmalloc/actions?query=workflow%3A%22GitHub+CI%22)
+[![CodeQL](https://github.com/topimiettinen/libaslrmalloc/workflows/CodeQL/badge.svg)](https://github.com/topimiettinen/libaslrmalloc/actions?query=workflow%3ACodeQL)
 
 `libaslrmalloc` is a LD_PRELOADed library which replaces `malloc()`,
 `free()`, `realloc()` and `calloc()` from C library. The main design
@@ -16,6 +18,10 @@ It has the following features:
 * also buggy
 
 Reading the [design document](/DESIGN.md) may present more complete view.
+
+`libaslrmalloc` is licensed with either LGPL 2.1 (or later) or BSD 3-clause licenses.
+Directory LICENCES contains the license texts.
+SPDX License Identifiers can be found in source files.
 
 Examples:
 
