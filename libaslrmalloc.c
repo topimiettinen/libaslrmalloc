@@ -485,8 +485,12 @@ void *realloc(void *ptr, size_t new_size)
 }
 
 #if DEBUG
+#ifndef ROUNDS1
 #define ROUNDS1 10
-#define ROUNDS2 256
+#endif
+#ifndef ROUNDS2
+#define ROUNDS2 16
+#endif
 int main(void) {
 	init();
 
@@ -494,7 +498,7 @@ int main(void) {
 		void *ptr[ROUNDS2];
 		for (int j = 0; j < ROUNDS2; j++)
 			ptr[j] = malloc(1UL << i);
-#if 1
+#if DEBUG_2
 		for (int j = 0; j < ROUNDS2; j++)
 			ptr[j] = realloc(ptr[j], (1UL << i) + 4096);
 #endif
