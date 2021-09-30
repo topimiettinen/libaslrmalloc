@@ -1,0 +1,17 @@
+Source: libaslrmalloc
+Section: libs
+Priority: optional
+Maintainer: Topi Miettinen <toiwoton@gmail.com>
+Standards-Version: 4.5.1
+Rules-Requires-Root: no
+Build-Depends: debhelper-compat (= 13),
+               meson (>= 0.52.1),
+
+Package: libaslrmalloc1
+Architecture: linux-any
+Depends: libc6
+Section: libs
+Priority: optional
+Description: malloc replacement library for maximum ASLR
+ libaslrmalloc can replace C library's malloc(), free(), calloc() and
+ realloc() with its own versions.

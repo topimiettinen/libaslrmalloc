@@ -1,0 +1,8 @@
+#! /usr/bin/make -f
+
+override_dh_install:
+	rm -f debian/*/usr/lib/*/*.so
+	dh_install
+
+%:
+	dh $@ --without autoreconf --buildsystem=meson
