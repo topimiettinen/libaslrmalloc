@@ -22,6 +22,13 @@ In contrast, many other malloc libraries keep the old allocations as caches.
 Correctly written code should always expect that `realloc()` may move the memory and
 the old memory may never be referenced after `realloc()` or `free()`.
 
+## Specification
+
+The purpose and operation of the allocation functions is described in detail in the manual pages:
+- Linux [malloc(3)](https://www.man7.org/linux/man-pages/man3/malloc.3.html), also describes `free()`, `calloc()`, `realloc()`
+- Posix [malloc(3p)](https://www.man7.org/linux/man-pages/man3/malloc.3p.html), [free(3p)](https://www.man7.org/linux/man-pages/man3/free.3p.html),
+[calloc(3p)](https://www.man7.org/linux/man-pages/man3/calloc.3p.html), [realloc(3p)](https://www.man7.org/linux/man-pages/man3/realloc.3p.html)
+
 ## Implementation
 Small allocations are taken from slabs with sizes of 16, 32, 64, 128, 256, 512, 1024 or 2048 bytes.
 All slabs in a page are same size. Slabs come from a single page, so slabs in different pages will not be in adjacent pages.
@@ -46,6 +53,16 @@ fill the memory with non-zero bytes (inspired by BSD `malloc()` implementations)
 This also applies to old memory in `realloc()`.
 Unmapping and filling can help find use-after-free ([CWE-416](https://cwe.mitre.org/data/definitions/416.html)) bugs.
 Filling can be turned off at compile time.
+
+### Previous implementations
+
+[Wikipedia](https://en.wikipedia.org/wiki/C_dynamic_memory_allocation) covers several implementations.
+
+- Glibc [Malloc Internals](https://sourceware.org/glibc/wiki/MallocInternals), [source](https://sourceware.org/git/?p=glibc.git;a=blob;f=malloc/malloc.c;h=2ba1fee144f5742daa0fdc72088f73d4c3049ffe;hb=HEAD)
+- Musl [mallocng](https://git.musl-libc.org/cgit/musl/tree/src/malloc/mallocng/malloc.c)
+- TCMalloc [Design](https://google.github.io/tcmalloc/design.html), [source](https://github.com/google/tcmalloc)
+- Hardened malloc [source](https://github.com/GrapheneOS/hardened_malloc)
+- OpenBSD malloc [man](https://man.openbsd.org/malloc), [source](https://cvsweb.openbsd.org/src/lib/libc/stdlib/malloc.c)
 
 ## TODO
 
@@ -75,3 +92,7 @@ Global state could be randomized a bit by splitting it to page table slab sized 
 The design should be very easy to extend to multithreaded allocator: each thread would get it's own global state pointer (as thread local storage)
 and own global structure, so there would be no locking issues.
 Freeing memory from a different thread would not be possible or very hard.
+In any case, the design should be made multithread safe.
+
+Implement [posix_memalign()](https://www.man7.org/linux/man-pages/man3/posix_memalign.3.html).
+In case a huge alignment (bad for ASLR) is requested, hugepages could be used.
