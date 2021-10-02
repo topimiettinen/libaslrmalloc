@@ -19,6 +19,7 @@
 #endif
 
 #include <assert.h>
+#include <cpuid.h>
 #include <errno.h>
 #include <malloc.h>
 #include <pthread.h>
@@ -41,11 +42,6 @@
 #define ULONG_SIZE (1 << ULONG_BITS)
 #define ULONG_MASK (~(ULONG_SIZE - 1))
 #define ULONG_ALIGN_UP(size) (((size) + (ULONG_SIZE - 1)) & ULONG_MASK)
-
-// TODO assumes CPU with 48 bit VA space (some Xeons have 56 bits)
-#define USER_VA_SPACE_BITS 47
-#define USER_VA_SPACE_SIZE (1UL << USER_VA_SPACE_BITS)
-#define USER_VA_SPACE_MASK (~(USER_VA_SPACE_SIZE - 1))
 
 #define BITS_PER_BYTE 8
 
@@ -84,14 +80,17 @@ struct malloc_state {
 
 static struct malloc_state *state;
 static pthread_mutex_t malloc_lock = PTHREAD_MUTEX_INITIALIZER;
+static unsigned long malloc_random_address_mask;
+static int malloc_getrandom_bytes;
 
 static void *mmap_random(size_t size) {
 	for (;;) {
 		unsigned long addr;
-		ssize_t r = getrandom(&addr, sizeof(addr), GRND_RANDOM);
-		if (r < sizeof(addr))
+		ssize_t r = getrandom(&addr, malloc_getrandom_bytes, GRND_RANDOM);
+		if (r < malloc_getrandom_bytes)
 			continue;
-		addr &= ~USER_VA_SPACE_MASK & PAGE_MASK;
+		addr <<= PAGE_BITS;
+		addr &= malloc_random_address_mask;
 		void *ret = mmap((void *)addr, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_PRIVATE, -1, 0);
 		if (ret == MAP_FAILED) {
 			if (errno == EEXIST || errno == EINVAL)
@@ -258,6 +257,17 @@ static void pagetable_free(struct small_pagelist *entry) {
   - pagelist for the initial page
 */
 static void init(void) {
+	// Get number of virtual address bits. There are lots of different values from 36 to 57 (https://en.wikipedia.org/wiki/X86)
+	unsigned int eax, unused;
+	int r = __get_cpuid(0x80000008, &eax, &unused, &unused, &unused);
+	long user_va_space_bits = 36;
+	if (r == 1)
+		user_va_space_bits = ((eax >> 8) & 0xff) - 1;
+	malloc_random_address_mask = ((1UL << user_va_space_bits) - 1) & PAGE_MASK;
+	malloc_getrandom_bytes = (user_va_space_bits - PAGE_BITS + 7) / 8;
+	DPRINTF("%ld VA space bits, mask %16.16lx, getrandom() bytes %d\n", user_va_space_bits, malloc_random_address_mask,
+		malloc_getrandom_bytes);
+
 	void *pagetables;
 	unsigned long temp_bitmap = 0;
 
