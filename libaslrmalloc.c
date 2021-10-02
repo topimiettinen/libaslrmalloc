@@ -21,6 +21,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <malloc.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,6 +83,7 @@ struct malloc_state {
 };
 
 static struct malloc_state *state;
+static pthread_mutex_t malloc_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void *mmap_random(size_t size) {
 	for (;;) {
@@ -298,6 +300,7 @@ void *malloc(size_t size)
 	if (index == (unsigned int)-1) {
 		// New large allocation
 		real_size = PAGE_ALIGN_UP(size);
+		pthread_mutex_lock(&malloc_lock);
 		struct large_pagelist *new = (struct large_pagelist *)pagetable_new();
 		if (!new)
 			goto oom;
@@ -315,6 +318,7 @@ void *malloc(size_t size)
 		pagetables_dump("pre malloc");
 		real_size = 1 << (index + MIN_ALLOC_BITS);
 
+		pthread_mutex_lock(&malloc_lock);
 		for (;;) {
 			for (struct small_pagelist *p = state->small_pages[index]; p; p = p->next) {
 				int offset = bitmap_find_first_clear(p->bitmap, bitmap_bits(size));
@@ -343,6 +347,7 @@ void *malloc(size_t size)
 		}
 	}
  found:
+	pthread_mutex_unlock(&malloc_lock);
 #ifdef FILL_JUNK
 	// Fill memory with junk
 	DPRINTF("malloc fill junk %p +%lu\n", ret, real_size);
@@ -352,6 +357,7 @@ void *malloc(size_t size)
 	DPRINTF("returning %p\n", ret);
 	return ret;
  oom:
+	pthread_mutex_unlock(&malloc_lock);
 	errno = ENOMEM;
 	return NULL;
 }
@@ -390,6 +396,7 @@ void free(void *ptr)
 	unsigned long address = (unsigned long)ptr;
 	unsigned long page_address = address & PAGE_MASK;
 
+	pthread_mutex_lock(&malloc_lock);
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
 		for (struct small_pagelist *p = state->small_pages[i], *prev = p; p; prev = p, p = p->next) {
 			if (((unsigned long)p->page & PAGE_MASK) == page_address) {
@@ -443,6 +450,7 @@ void free(void *ptr)
 	fprintf(stderr, "free: %p not found!\n", ptr);
 	abort();
  found:
+	pthread_mutex_unlock(&malloc_lock);
 	pagetables_dump("post free");
 }
 
