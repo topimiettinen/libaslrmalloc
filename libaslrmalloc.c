@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/param.h>
 #include <sys/random.h>
 #include <unistd.h>
 
@@ -52,11 +53,6 @@
 
 // Worst case: one bit for each smallest item (MIN_ALLOC_SIZE) per page
 #define BITMAP_ULONGS (PAGE_SIZE / MIN_ALLOC_SIZE / ULONG_SIZE)
-
-#ifndef MAX
-#define MAX(a,b) ((a) > (b)? (a) : (b))
-#endif
-
 
 // TODO hash tables?
 struct small_pagelist {
@@ -486,7 +482,7 @@ void *realloc(void *ptr, size_t new_size)
 		errno = ENOMEM;
 		return NULL;
 	}
-	memcpy(ret, ptr, (old_size > new_size? new_size : old_size));
+	memcpy(ret, ptr, MIN(old_size, new_size));
 #ifdef FILL_JUNK
 	// Fill new part of memory with junk
 	if (new_size > old_size) {
