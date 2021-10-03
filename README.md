@@ -20,7 +20,10 @@ It has the following features:
 
 Reading the [design document](/DESIGN.md) may present more complete view.
 
-`libaslrmalloc` is licensed with either LGPL 2.1 (or later) or BSD 3-clause licenses.
+[![SPDX-License-Identifier: LGPL-2.1-or-later](https://img.shields.io/static/v1?label=SPDX-License-Identifier&message=LGPL-2.1-or-later&color=blue&logo=open-source-initiative&logoColor=white&logoWidth=10&style=flat-square)](LICENSES/LGPL-2.1-or-later)
+[![SPDX-License-Identifier: BSD-3-Clause](https://img.shields.io/static/v1?label=SPDX-License-Identifier&message=BSD-3-Clause&color=blue&logo=open-source-initiative&logoColor=white&logoWidth=10&style=flat-square)](LICENSES/BSD-3-Clause)
+
+`libaslrmalloc` is licensed with either [LGPL 2.1 (or later)](LICENSES/LGPL-2.1-or-later) or [BSD 3-clause](LICENSES/BSD-3-Clause) licenses.
 Directory LICENCES contains the license texts.
 SPDX License Identifiers can be found in source files.
 
