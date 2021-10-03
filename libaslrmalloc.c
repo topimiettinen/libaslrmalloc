@@ -219,13 +219,17 @@ static struct small_pagelist *pagetable_new(void) {
 			}
 		}
 
-		struct small_pagelist *new = mmap_random(PAGE_SIZE);
-		if (new == MAP_FAILED)
+		void *page = mmap_random(PAGE_SIZE);
+		if (page == MAP_FAILED)
 			goto oom;
-		new->page = new;
 
-		DPRINTF("new pagetable %p page %p\n", new, new->page);
+		// TODO offset could be randomized instead of 0
+		int offset = 0;
+		struct small_pagelist *new = ptr_to_offset_in_page(page, index, offset);
+		new->page = page;
+		bitmap_set(new->bitmap, offset);
 		new->next = state->pagetables;
+		DPRINTF("new pagetable %p page %p\n", new, new->page);
 		state->pagetables = new;
 	}
 
@@ -314,10 +318,11 @@ void *malloc(size_t size)
 		struct large_pagelist *new = (struct large_pagelist *)pagetable_new();
 		if (!new)
 			goto oom;
-		new->page = mmap_random(real_size);
-		if (new->page == MAP_FAILED)
+		void *page = mmap_random(real_size);
+		if (page == MAP_FAILED)
 			goto oom;
 
+		new->page = page;
 		new->size = size;
 		new->next = state->large_pages;
 		DPRINTF("new large page %p .page=%p .size=%lx\n", new, new->page, new->size);
@@ -345,10 +350,11 @@ void *malloc(size_t size)
 			if (!new)
 				goto oom;
 
-			new->page = mmap_random(PAGE_SIZE);
-			if (new->page == MAP_FAILED)
+			void *page = mmap_random(PAGE_SIZE);
+			if (page == MAP_FAILED)
 				goto oom;
 
+			new->page = page;
 			memset(new->bitmap, 0, sizeof(new->bitmap));
 			new->next = state->small_pages[index];
 			DPRINTF("new small pagetable at index %u %p .page=%p\n", index, new, new->page);
