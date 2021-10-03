@@ -379,6 +379,9 @@ void *malloc(size_t size)
 }
 
 size_t malloc_usable_size(void *ptr) {
+	if (!state)
+		init();
+
 	DPRINTF("pagetables .page=%p .bm=%lx\n", state->pagetables->page, state->pagetables->bitmap[0]);
 	unsigned long address = (unsigned long)ptr & PAGE_MASK;
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
@@ -404,6 +407,9 @@ size_t malloc_usable_size(void *ptr) {
 
 void free(void *ptr)
 {
+	if (!state)
+		init();
+
 	if (!ptr)
 		return;
 
@@ -472,6 +478,9 @@ void free(void *ptr)
 
 void *calloc(size_t nmemb, size_t size)
 {
+	if (!state)
+		init();
+
 	__uint128_t new_size = (__uint128_t)nmemb * (__uint128_t)size;
 	if (new_size == 0 || new_size > (__uint128_t)(1ULL << malloc_user_va_space_bits)) {
 		errno = ENOMEM;
@@ -485,6 +494,9 @@ void *calloc(size_t nmemb, size_t size)
 
 void *realloc(void *ptr, size_t new_size)
 {
+	if (!state)
+		init();
+
 	if (!ptr)
 		return malloc(new_size);
 	if (new_size == 0) {
