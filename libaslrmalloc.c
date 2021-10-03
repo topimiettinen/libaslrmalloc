@@ -14,8 +14,10 @@
 #define calloc xcalloc
 #define realloc xrealloc
 #define DPRINTF(format, ...) fprintf(stderr, "%s: " format, __FUNCTION__, ##__VA_ARGS__)
+#define DPRINTF_NOPREFIX(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
 #else
 #define DPRINTF(...)
+#define DPRINTF_NOPREFIX(...)
 #endif
 
 #include <assert.h>
@@ -145,7 +147,7 @@ static int bitmap_find_first_clear(const unsigned long *bitmap, unsigned int bit
 		int ret = b + __builtin_ctzl(~bitmap[i]);
 		if (ret >= bitmap_bits - b)
 			ret = -1;
-		DPRINTF("counting bits returning %u\n", ret);
+		DPRINTF("counting bits returning %d\n", ret);
 		return ret;
 	}
 	DPRINTF("returning -1\n");
@@ -179,13 +181,21 @@ static void pagetables_dump(const char *label) {
 	unsigned int count;
 	struct small_pagelist *p;
 	count = 0;
-	for (p = state->pagetables, count = 0; p; p = p->next, count++)
-		DPRINTF("%s: pagetables (%p) [%u] .page=%p bm=%lx\n", label, p, count, p->page, p->bitmap[0]);
+	for (p = state->pagetables, count = 0; p; p = p->next, count++) {
+		DPRINTF("%s: pagetables (%p) [%u] .page=%p bm=", label, p, count, p->page);
+		for (int i = 0; i < BITMAP_ULONGS; i++)
+			DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
+		DPRINTF_NOPREFIX("\n");
+	}
 
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
 		count = 0;
-		for (p = state->small_pages[i]; p; p = p->next, count++)
-			DPRINTF("%s: small_pages[%u] (%p) [%u] .page=%p bm=%lx\n", label, i, p, count, p->page, p->bitmap[0]);
+		for (p = state->small_pages[i]; p; p = p->next, count++) {
+			DPRINTF("%s: small_pages[%u] (%p) [%u] .page=%p bm=", label, i, p, count, p->page);
+			for (int i = 0; i < BITMAP_ULONGS; i++)
+				DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
+			DPRINTF_NOPREFIX("\n");
+		}
 	}
 
 	count = 0;
@@ -324,7 +334,7 @@ void *malloc(size_t size)
 				int offset = bitmap_find_first_clear(p->bitmap, bitmap_bits(size));
 
 				if (offset >= 0) {
-					DPRINTF("malloc: found offset %d ptr %p\n", offset, p->page);
+					DPRINTF("found offset %d ptr %p\n", offset, p->page);
 					ret = ptr_to_offset_in_page(p->page, index, offset);
 					bitmap_set(p->bitmap, offset);
 					goto found;
@@ -340,8 +350,8 @@ void *malloc(size_t size)
 				goto oom;
 
 			memset(new->bitmap, 0, sizeof(new->bitmap));
-			DPRINTF("malloc: new small pagetable at index %u %p .page=%p\n", index, new, new->page);
 			new->next = state->small_pages[index];
+			DPRINTF("new small pagetable at index %u %p .page=%p\n", index, new, new->page);
 			state->small_pages[index] = new;
 			pagetables_dump("post adding new page table");
 		}
@@ -350,7 +360,7 @@ void *malloc(size_t size)
 	pthread_mutex_unlock(&malloc_lock);
 #ifdef FILL_JUNK
 	// Fill memory with junk
-	DPRINTF("malloc fill junk %p +%lu\n", ret, real_size);
+	DPRINTF("fill junk %p +%lu\n", ret, real_size);
 	memset(ret, FILL_JUNK, real_size);
 #endif
 	pagetables_dump("post malloc");
@@ -486,7 +496,7 @@ void *realloc(void *ptr, size_t new_size)
 #ifdef FILL_JUNK
 	// Fill new part of memory with junk
 	if (new_size > old_size) {
-		DPRINTF("realloc fill junk %p +%lu\n", &((char *)ret)[old_size], new_size - old_size);
+		DPRINTF("fill junk %p +%lu\n", &((char *)ret)[old_size], new_size - old_size);
 		memset(&((char *)ret)[old_size], FILL_JUNK, new_size - old_size);
 	}
 #endif
