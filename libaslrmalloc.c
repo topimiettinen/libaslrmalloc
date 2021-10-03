@@ -372,27 +372,27 @@ void *malloc(size_t size)
 	return NULL;
 }
 
-static size_t find_size(void *ptr) {
-	DPRINTF("find_size pagetables .page=%p .bm=%lx\n", state->pagetables->page, state->pagetables->bitmap[0]);
+size_t malloc_usable_size(void *ptr) {
+	DPRINTF("pagetables .page=%p .bm=%lx\n", state->pagetables->page, state->pagetables->bitmap[0]);
 	unsigned long address = (unsigned long)ptr & PAGE_MASK;
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
 		for (struct small_pagelist *p = state->small_pages[i]; p; p = p->next) {
-			DPRINTF("find_size pages[%u] .page=%p bm=%lx\n", i, p->page, p->bitmap[0]);
+			DPRINTF("pages[%u] .page=%p bm=%lx\n", i, p->page, p->bitmap[0]);
 			if (((unsigned long)p->page & PAGE_MASK) == address)
 				return (1 << (i + MIN_ALLOC_BITS));
 		}
 	}
 
-	DPRINTF("find_size trying large list\n");
+	DPRINTF("trying large list\n");
 
 	for (struct large_pagelist *p = state->large_pages; p; p = p->next) {
-		DPRINTF("find_size .page=%p .size=%lx\n", p->page, p->size);
+		DPRINTF(".page=%p .size=%lx\n", p->page, p->size);
 		if (((unsigned long)p->page & PAGE_MASK) == address) {
 			DPRINTF("found\n");
 			return p->size;
 		}
 	}
-	fprintf(stderr, "realloc: %p not found!\n", ptr);
+	fprintf(stderr, "malloc_usable_size: %p not found!\n", ptr);
 	abort();
 }
 
@@ -482,7 +482,7 @@ void *realloc(void *ptr, size_t new_size)
 		free(ptr);
 		return NULL;
 	}
-	size_t old_size = find_size(ptr);
+	size_t old_size = malloc_usable_size(ptr);
 	DPRINTF("realloc(%p, %lu) old_size %lu\n", ptr, new_size, old_size);
 	void *ret = malloc(new_size);
 	if (!ret) {
