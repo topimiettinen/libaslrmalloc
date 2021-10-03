@@ -8,9 +8,17 @@ name: flawfinder
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'meson.build'
+      - '.github/workflows/**'
+      - '**.c'
   pull_request:
     # The branches below must be a subset of the branches above
     branches: [ master ]
+    paths:
+      - 'meson.build'
+      - '.github/workflows/**'
+      - '**.c'
   schedule:
     - cron: '23 10 * * 3'
 
