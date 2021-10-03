@@ -345,7 +345,7 @@ void *malloc(size_t size)
 			if (!new)
 				goto oom;
 
-			new->page = mmap_random(real_size);
+			new->page = mmap_random(PAGE_SIZE);
 			if (new->page == MAP_FAILED)
 				goto oom;
 
