@@ -145,7 +145,7 @@ static int bitmap_find_first_clear(const unsigned long *bitmap, unsigned int bit
 			continue;
 
 		int ret = b + __builtin_ctzl(~bitmap[i]);
-		if (ret >= bitmap_bits - b)
+		if (ret >= bitmap_bits)
 			ret = -1;
 		DPRINTF("counting bits returning %d\n", ret);
 		return ret;
