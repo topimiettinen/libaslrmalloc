@@ -382,6 +382,9 @@ size_t malloc_usable_size(void *ptr) {
 	if (!state)
 		init();
 
+	if (!ptr)
+		return 0;
+
 	DPRINTF("pagetables .page=%p .bm=%lx\n", state->pagetables->page, state->pagetables->bitmap[0]);
 	unsigned long address = (unsigned long)ptr & PAGE_MASK;
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
