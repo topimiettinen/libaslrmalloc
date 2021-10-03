@@ -103,3 +103,5 @@ Maybe the guard pages could be even larger than one page, for example fill the e
 That should only affect kernel's internal VMA structures, not CPU page tables.
 
 On Intel CPUs, `pkey_mprotect()` could be used to protect internal structures with [pkeys](https://man7.org/linux/man-pages/man7/pkeys.7.html) (weakly).
+
+Full pages could be kept in separate page table lists, so they wouldn't be consulted when looking for a free slab.
