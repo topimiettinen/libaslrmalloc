@@ -1,0 +1,14 @@
+path_classifiers:
+  test:
+    - "*.c"
+extraction:
+  cpp:
+    prepare:
+      packages:
+        - meson
+    configure:
+      command:
+        - meson setup builddir/
+    index:
+      build_command:
+        - meson compile -C builddir/
