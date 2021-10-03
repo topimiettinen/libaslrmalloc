@@ -27,7 +27,22 @@ Reading the [design document](/DESIGN.md) may present more complete view.
 Directory LICENCES contains the license texts.
 SPDX License Identifiers can be found in source files.
 
-Examples:
+## Build
+
+```bash
+$ sudo apt-get install build-essential meson
+$ meson setup builddir/
+$ meson compile -C builddir/ -v
+```
+
+## Install
+
+```bash
+$ dpkg-buildpackage --no-sign
+$ sudo dpkg -i ../libaslrmalloc1_1-1_amd64.deb
+```
+
+## Examples
 
 The examples below disable kernel's ASLR to see the difference:
 ```bash
