@@ -82,6 +82,7 @@ static struct malloc_state *state;
 static pthread_mutex_t malloc_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned long malloc_random_address_mask;
 static int malloc_getrandom_bytes;
+static int malloc_user_va_space_bits;
 
 static void *mmap_random(size_t size) {
 	for (;;) {
@@ -177,13 +178,6 @@ static void *ptr_to_offset_in_page(void *page, unsigned int size_index, int num)
 	return (void *)address;
 }
 
-static void *zalloc(size_t size) {
-	void *ptr = malloc(size);
-	if (ptr)
-		memset(ptr, 0, size);
-	return ptr;
-}
-
 static void pagetables_dump(const char *label) {
 #if DEBUG
 	unsigned int count;
@@ -260,12 +254,12 @@ static void init(void) {
 	// Get number of virtual address bits. There are lots of different values from 36 to 57 (https://en.wikipedia.org/wiki/X86)
 	unsigned int eax, unused;
 	int r = __get_cpuid(0x80000008, &eax, &unused, &unused, &unused);
-	long user_va_space_bits = 36;
+	malloc_user_va_space_bits = 36;
 	if (r == 1)
-		user_va_space_bits = ((eax >> 8) & 0xff) - 1;
-	malloc_random_address_mask = ((1UL << user_va_space_bits) - 1) & PAGE_MASK;
-	malloc_getrandom_bytes = (user_va_space_bits - PAGE_BITS + 7) / 8;
-	DPRINTF("%ld VA space bits, mask %16.16lx, getrandom() bytes %d\n", user_va_space_bits, malloc_random_address_mask,
+		malloc_user_va_space_bits = ((eax >> 8) & 0xff) - 1;
+	malloc_random_address_mask = ((1UL << malloc_user_va_space_bits) - 1) & PAGE_MASK;
+	malloc_getrandom_bytes = (malloc_user_va_space_bits - PAGE_BITS + 7) / 8;
+	DPRINTF("%d VA space bits, mask %16.16lx, getrandom() bytes %d\n", malloc_user_va_space_bits, malloc_random_address_mask,
 		malloc_getrandom_bytes);
 
 	void *pagetables;
@@ -466,12 +460,15 @@ void free(void *ptr)
 
 void *calloc(size_t nmemb, size_t size)
 {
-	size *= nmemb;
-	if (!size) {
+	__uint128_t new_size = (__uint128_t)nmemb * (__uint128_t)size;
+	if (new_size == 0 || new_size > (__uint128_t)(1ULL << malloc_user_va_space_bits)) {
 		errno = ENOMEM;
 		return NULL;
 	}
-	return zalloc(size);
+	void *ptr = malloc((size_t)new_size);
+	if (ptr)
+		memset(ptr, 0, (size_t)new_size);
+	return ptr;
 }
 
 void *realloc(void *ptr, size_t new_size)
