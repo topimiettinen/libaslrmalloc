@@ -3,7 +3,7 @@
 [![CodeQL](https://github.com/topimiettinen/libaslrmalloc/workflows/CodeQL/badge.svg)](https://github.com/topimiettinen/libaslrmalloc/actions?query=workflow%3ACodeQL)
 
 `libaslrmalloc` is a LD_PRELOADed library which replaces `malloc()`,
-`free()`, `realloc()` and `calloc()` from C library. The main design
+`free()`, `realloc()`,`calloc()` and `malloc_usable_size()` from C library. The main design
 goal is not performance or memory consumption but to increase address space
 layout randomization ([ASLR](https://en.wikipedia.org/wiki/Address_space_layout_randomization)), hence the name.
 This is achieved by not trying to keep the pages together, forcing the kernel to map
