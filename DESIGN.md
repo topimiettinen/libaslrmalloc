@@ -93,6 +93,13 @@ The design should be very easy to extend to multithreaded allocator: each thread
 and own global structure, so there would be no locking issues.
 Freeing memory from a different thread would not be possible or very hard.
 In any case, the design should be made multithread safe.
+Perhaps mutexes could be fine grained (one for internal page table, one for each small and one for the large page table).
 
 Implement [posix_memalign()](https://www.man7.org/linux/man-pages/man3/posix_memalign.3.html).
 In case a huge alignment (bad for ASLR) is requested, hugepages could be used.
+
+Guard pages (`mprotect(,, PROT_NONE)`) could be used before and after the allocated pages, to prevent other mappings getting too near.
+Maybe the guard pages could be even larger than one page, for example fill the entire 2MB page table entry.
+That should only affect kernel's internal VMA structures, not CPU page tables.
+
+On Intel CPUs, `pkey_mprotect()` could be used to protect internal structures with [pkeys](https://man7.org/linux/man-pages/man7/pkeys.7.html) (weakly).
