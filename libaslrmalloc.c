@@ -334,14 +334,16 @@ static void init(void) {
 
 void *malloc(size_t size)
 {
+	int saved_errno = errno;
+
 	void *ret = NULL;
 
 	if (!state)
 		init();
 
 	DPRINTF("malloc(%lu)\n", size);
-	if (!size)
-		return NULL;
+	if (size == 0)
+		goto finish;
 
 	unsigned int index = get_index(size);
 	size_t real_size;
@@ -404,7 +406,9 @@ void *malloc(size_t size)
 	memset(ret, FILL_JUNK, real_size);
 #endif
 	pagetables_dump("post malloc");
+ finish:
 	DPRINTF("returning %p\n", ret);
+	errno = saved_errno;
 	return ret;
  oom:
 	pthread_mutex_unlock(&malloc_lock);
@@ -413,19 +417,24 @@ void *malloc(size_t size)
 }
 
 size_t malloc_usable_size(void *ptr) {
+	int saved_errno = errno;
+	size_t ret = 0;
+
 	if (!state)
 		init();
 
 	if (!ptr)
-		return 0;
+		goto finish;
 
 	DPRINTF("pagetables .page=%p .bm=%lx\n", state->pagetables->page, state->pagetables->bitmap[0]);
 	unsigned long address = (unsigned long)ptr & PAGE_MASK;
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
 		for (struct small_pagelist *p = state->small_pages[i]; p; p = p->next) {
 			DPRINTF("pages[%u] .page=%p bm=%lx\n", i, p->page, p->bitmap[0]);
-			if (((unsigned long)p->page & PAGE_MASK) == address)
-				return (1 << (i + MIN_ALLOC_BITS));
+			if (((unsigned long)p->page & PAGE_MASK) == address) {
+				ret = (1 << (i + MIN_ALLOC_BITS));
+				goto finish;
+			}
 		}
 	}
 
@@ -435,20 +444,27 @@ size_t malloc_usable_size(void *ptr) {
 		DPRINTF(".page=%p .size=%lx\n", p->page, p->size);
 		if (((unsigned long)p->page & PAGE_MASK) == address) {
 			DPRINTF("found\n");
-			return p->size;
+			ret = p->size;
+			goto finish;
 		}
 	}
 	fprintf(stderr, "malloc_usable_size: %p not found!\n", ptr);
 	abort();
+ finish:
+	DPRINTF("returning %lx\n", ret);
+	errno = saved_errno;
+	return ret;
 }
 
 void free(void *ptr)
 {
+	int saved_errno = errno;
+
 	if (!state)
 		init();
 
 	if (!ptr)
-		return;
+		goto finish;
 
 	DPRINTF("free(%p)\n", ptr);
 	pagetables_dump("pre free");
@@ -511,10 +527,14 @@ void free(void *ptr)
  found:
 	pthread_mutex_unlock(&malloc_lock);
 	pagetables_dump("post free");
+ finish:
+	errno = saved_errno;
 }
 
 void *calloc(size_t nmemb, size_t size)
 {
+	int saved_errno = errno;
+
 	if (!state)
 		init();
 
@@ -524,13 +544,17 @@ void *calloc(size_t nmemb, size_t size)
 		return NULL;
 	}
 	void *ptr = malloc((size_t)new_size);
-	if (ptr)
+	if (ptr) {
 		memset(ptr, 0, (size_t)new_size);
+		errno = saved_errno;
+	}
 	return ptr;
 }
 
 void *realloc(void *ptr, size_t new_size)
 {
+	int saved_errno = errno;
+
 	if (!state)
 		init();
 
@@ -538,6 +562,7 @@ void *realloc(void *ptr, size_t new_size)
 		return malloc(new_size);
 	if (new_size == 0) {
 		free(ptr);
+		errno = saved_errno;
 		return NULL;
 	}
 	size_t old_size = malloc_usable_size(ptr);
@@ -557,6 +582,7 @@ void *realloc(void *ptr, size_t new_size)
 #endif
 	free(ptr);
 	DPRINTF("returning %p\n", ret);
+	errno = saved_errno;
 	return ret;
 }
 
