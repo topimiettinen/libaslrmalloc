@@ -337,8 +337,7 @@ static void init(void) {
 
 void *malloc(size_t size)
 {
-	int saved_errno = errno;
-
+	int ret_errno = errno;
 	void *ret = NULL;
 
 	if (!state)
@@ -347,6 +346,11 @@ void *malloc(size_t size)
 	DPRINTF("malloc(%lu)\n", size);
 	if (size == 0)
 		goto finish;
+
+	if (size > (1UL << malloc_user_va_space_bits)) {
+		ret_errno = ENOMEM;
+		goto finish;
+	}
 
 	unsigned int index = get_index(size);
 	size_t real_size;
@@ -411,7 +415,7 @@ void *malloc(size_t size)
 	pagetables_dump("post malloc");
  finish:
 	DPRINTF("returning %p\n", ret);
-	errno = saved_errno;
+	errno = ret_errno;
 	return ret;
  oom:
 	pthread_mutex_unlock(&malloc_lock);
