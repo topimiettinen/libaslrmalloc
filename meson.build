@@ -21,3 +21,6 @@ test('test_3', cat, args: '/proc/self/maps', env: preload)
 
 test_4 = executable('test_4', 'libaslrmalloc.c', c_args: ['-DDEBUG', '-DLIBC'])
 test('test_4', test_4)
+
+test_5 = executable('test_5', 'libaslrmalloc.c', c_args: ['-DDEBUG', '-DDEBUG_2', '-DROUNDS1=1', '-DROUNDS2=520'])
+test('test_5', test_5)
