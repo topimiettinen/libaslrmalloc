@@ -8,6 +8,7 @@
 */
 //#define DEBUG 1
 
+#if !LIBC
 #if DEBUG
 #define malloc xmalloc
 #define free xfree
@@ -18,6 +19,7 @@
 #else
 #define DPRINTF(...)
 #define DPRINTF_NOPREFIX(...)
+#endif
 #endif
 
 #include <assert.h>
@@ -33,6 +35,7 @@
 #include <sys/random.h>
 #include <unistd.h>
 
+#if !LIBC
 // TODO assumes page size of 4096
 #define PAGE_BITS 12
 #define PAGE_SIZE (1 << PAGE_BITS)
@@ -539,7 +542,7 @@ void *calloc(size_t nmemb, size_t size)
 		init();
 
 	__uint128_t new_size = (__uint128_t)nmemb * (__uint128_t)size;
-	if (new_size == 0 || new_size > (__uint128_t)(1ULL << malloc_user_va_space_bits)) {
+	if (new_size > (__uint128_t)(1ULL << malloc_user_va_space_bits)) {
 		errno = ENOMEM;
 		return NULL;
 	}
@@ -586,6 +589,8 @@ void *realloc(void *ptr, size_t new_size)
 	return ret;
 }
 
+#endif
+
 #if DEBUG
 #ifndef ROUNDS1
 #define ROUNDS1 10
@@ -593,21 +598,47 @@ void *realloc(void *ptr, size_t new_size)
 #ifndef ROUNDS2
 #define ROUNDS2 16
 #endif
-int main(void) {
-	init();
 
+volatile void *ptr; // Try to defeat compiler optimizations detecting malloc + free
+volatile void *ptrv[ROUNDS2];
+
+int main(void) {
 	for (int i = 0; i < ROUNDS1; i++) {
-		void *ptr[ROUNDS2];
 		for (int j = 0; j < ROUNDS2; j++)
-			ptr[j] = malloc(1UL << i);
+			ptrv[j] = malloc(1UL << i);
 #if DEBUG_2
-		for (int j = 0; j < ROUNDS2; j++)
-			ptr[j] = realloc(ptr[j], (1UL << i) + 4096);
+		for (int j = 0; j < ROUNDS2; j++) {
+			ptrv[j] = realloc((void *)ptrv[j], (1UL << i) + 4096);
+			ptrv[j] = realloc((void *)ptrv[j], (1UL << i));
+		}
 #endif
 		for (int j = 0; j < ROUNDS2; j++)
-			free(ptr[j]);
+			free((void *)ptrv[j]);
 	}
 
+	errno = EBADF;
+	free(NULL);
+	ptr = malloc(0);
+	free((void *)ptr);
+	ptr = malloc(0);
+	ptr = realloc((void *)ptr, 0); // Equal to free()
+	assert(ptr == NULL);
+	ptr = calloc(0, 0);
+	free((void *)ptr);
+	ptr = calloc(4096, 1);
+	free((void *)ptr);
+	ptr = calloc(4096, 4);
+	free((void *)ptr);
+	assert(errno == EBADF);
+
+	ptr = malloc((size_t)1024*1024*1024*1024*1024); // Test OOM
+	assert(errno == ENOMEM);
+	errno = EBADF;
+	ptr = realloc(NULL, (size_t)1024*1024*1024*1024*1024); // Test OOM
+	assert(errno == ENOMEM);
+	errno = EBADF;
+	ptr = calloc(INT_MAX, INT_MAX);
+	assert(errno == ENOMEM);
 	return 0;
 }
 #endif
