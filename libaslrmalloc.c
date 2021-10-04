@@ -599,7 +599,7 @@ void *realloc(void *ptr, size_t new_size)
 #define ROUNDS2 16
 #endif
 
-volatile void *ptr; // Try to defeat compiler optimizations detecting malloc + free
+volatile void *ptr, *ptr2; // Try to defeat compiler optimizations detecting malloc + free
 volatile void *ptrv[ROUNDS2];
 
 int main(void) {
@@ -618,24 +618,40 @@ int main(void) {
 
 	errno = EBADF;
 	free(NULL);
+
 	ptr = malloc(0);
 	free((void *)ptr);
+
 	ptr = malloc(1);
+	size_t usable_size = malloc_usable_size((void *)ptr);
+	assert(usable_size >= 1);
 	ptr = realloc((void *)ptr, 0); // Equal to free()
 	assert(ptr == NULL);
+
 	ptr = calloc(0, 0);
 	free((void *)ptr);
+
 	ptr = calloc(4096, 1);
+	ptr2 = calloc(4096, 4);
 	free((void *)ptr);
-	ptr = calloc(4096, 4);
-	free((void *)ptr);
+	free((void *)ptr2);
 	assert(errno == EBADF);
+
+	usable_size = malloc_usable_size(NULL);
+	assert(usable_size == 0);
 
 	ptr = malloc((size_t)1024*1024*1024*1024*1024); // Test OOM
 	assert(errno == ENOMEM);
+
 	errno = EBADF;
 	ptr = realloc(NULL, (size_t)1024*1024*1024*1024*1024); // Test OOM
 	assert(errno == ENOMEM);
+
+	errno = EBADF;
+	ptr = malloc(1);
+	ptr2 = realloc((void *)ptr, (size_t)1024*1024*1024*1024*1024); // Test OOM
+	assert(errno == ENOMEM && ptr2 == NULL);
+
 	errno = EBADF;
 	ptr = calloc(INT_MAX, INT_MAX);
 	assert(errno == ENOMEM);
