@@ -109,6 +109,13 @@ static unsigned int get_index(size_t size) {
 	return -1;
 }
 
+static unsigned int last_index(size_t size) {
+	for (unsigned int index = MIN_ALLOC_BITS; index < PAGE_BITS; index++)
+		if (size <= (1UL << index))
+			return (PAGE_SIZE / (1UL << index)) - 1;
+	return -1;
+}
+
 static unsigned int align_up_size(size_t size) {
 	for (unsigned int index = MIN_ALLOC_BITS; index < PAGE_BITS; index++)
 		if (size <= (1UL << index))
@@ -235,8 +242,8 @@ static struct small_pagelist *pagetable_new(void) {
 		if (page == MAP_FAILED)
 			goto oom;
 
-		// TODO offset could be randomized instead of 0
-		int offset = 0;
+		// TODO offset could be randomized instead of last index
+		int offset = last_index(sizeof(*ret));
 		struct small_pagelist *new = ptr_to_offset_in_page(page, index, offset);
 		new->page = page;
 		bitmap_set(new->bitmap, offset);
@@ -254,12 +261,26 @@ static struct small_pagelist *pagetable_new(void) {
 
 static void pagetable_free(struct small_pagelist *entry) {
 	int size_index = get_index(sizeof(struct small_pagelist));
-	for (struct small_pagelist *p = state->pagetables; p; p = p->next) {
+	for (struct small_pagelist *p = state->pagetables, *prev = p; p; prev = p, p = p->next) {
 		DPRINTF(".page=%p bm=%lx\n", p->page, p->bitmap[0]);
 		if (((unsigned long)p->page & PAGE_MASK) == ((unsigned long)entry & PAGE_MASK)) {
 			unsigned int bit = ((unsigned long)entry & ~PAGE_MASK) >> (size_index + MIN_ALLOC_BITS);
 			DPRINTF("found match %p == %p, clearing bit %u (index %d)\n", entry, p->page, bit, size_index);
 			bitmap_clear(p->bitmap, bit);
+
+			// Check for emptiness excluding the last bit (entry used for managing the page itself)
+			if (bitmap_is_empty(p->bitmap, last_index(sizeof(struct small_pagelist)))) {
+				DPRINTF("unmap pagetable %p\n", p->page);
+				int r = munmap(p->page, PAGE_SIZE);
+				if (r < 0) {
+					perror("munmap");
+					abort();
+				}
+				if (prev == p)
+					state->pagetables = p->next;
+				else
+					prev->next = p->next;
+			}
 			return;
 		}
 	}
@@ -301,9 +322,10 @@ static void init(void) {
 		bitmap_set(&temp_bitmap, i);
 
 	// Mark allocation for page tables
-	int first_free = bitmap_find_first_clear(&temp_bitmap, ULONG_BITS);
-	bitmap_set(&temp_bitmap, first_free);
-	state->pagetables = ptr_to_offset_in_page(pagetables, pages_index, first_free);
+	// TODO offset could be randomized instead of last index
+	offset = last_index(sizeof(struct small_pagelist));
+	bitmap_set(&temp_bitmap, offset);
+	state->pagetables = ptr_to_offset_in_page(pagetables, pages_index, offset);
 	state->pagetables->page = pagetables;
 	// Copy temporary bitmap
 	state->pagetables->bitmap[0] = temp_bitmap;
