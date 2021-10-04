@@ -620,7 +620,7 @@ int main(void) {
 	free(NULL);
 	ptr = malloc(0);
 	free((void *)ptr);
-	ptr = malloc(0);
+	ptr = malloc(1);
 	ptr = realloc((void *)ptr, 0); // Equal to free()
 	assert(ptr == NULL);
 	ptr = calloc(0, 0);
