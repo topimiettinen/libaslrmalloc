@@ -132,19 +132,24 @@ static void bitmap_clear(unsigned long *bitmap, unsigned int bit) {
 // TODO free item could be found in random order instead of first
 static int bitmap_find_first_clear(const unsigned long *bitmap, unsigned int bitmap_bits) {
 	DPRINTF("bitmap_bits %u (%u words)\n", bitmap_bits, bitmap_bits >> ULONG_BITS);
-	unsigned int b = 0;
 
-	for (; b < bitmap_bits; b += 1 << ULONG_BITS) {
+	for (unsigned int b = 0; b < bitmap_bits; b += 1 << ULONG_BITS) {
 		unsigned int i = b >> ULONG_BITS;
-		DPRINTF("checking index %u word %lx bits left %d\n", i, bitmap[i], bitmap_bits - b);
-		if (bitmap[i] == 0) {
+		unsigned long mask = (unsigned long)-1;
+
+		if (bitmap_bits - b < ULONG_SIZE)
+			mask = (1UL << (bitmap_bits - b)) - 1;
+		unsigned long word = bitmap[i] & mask;
+
+		DPRINTF("checking index %u word %lx mask %lx bits left %d\n", i, word, mask, bitmap_bits - b);
+		if (word == 0) {
 			DPRINTF("returning %u\n", b);
 			return b;
 		}
-		if (bitmap[i] == (unsigned long)-1)
+		if (word == ((unsigned long)-1 & mask))
 			continue;
 
-		int ret = b + __builtin_ctzl(~bitmap[i]);
+		int ret = b + __builtin_ctzl(~word);
 		if (ret >= bitmap_bits)
 			ret = -1;
 		DPRINTF("counting bits returning %d\n", ret);
@@ -155,11 +160,18 @@ static int bitmap_find_first_clear(const unsigned long *bitmap, unsigned int bit
 }
 
 static bool bitmap_is_empty(const unsigned long *bitmap, unsigned int bitmap_bits) {
-	bitmap_bits = ULONG_ALIGN_UP(bitmap_bits);
 	DPRINTF("bitmap_bits %u (%u words)\n", bitmap_bits, bitmap_bits >> ULONG_BITS);
-	for (unsigned int i = 0; (i << ULONG_BITS) < bitmap_bits; i++) {
-		DPRINTF("checking index %u word %lx\n", i, bitmap[i]);
-		if (bitmap[i] != 0) {
+
+	for (unsigned int b = 0; b < bitmap_bits; b += 1 << ULONG_BITS) {
+		unsigned int i = b >> ULONG_BITS;
+		unsigned long mask = (unsigned long)-1;
+
+		if (bitmap_bits - b < ULONG_SIZE)
+			mask = (1UL << (bitmap_bits - b)) - 1;
+		unsigned long word = bitmap[i] & mask;
+
+		DPRINTF("checking index %u word %lx mask %lx bits left %d\n", i, word, mask, bitmap_bits - b);
+		if (word != 0) {
 			DPRINTF("returning false\n");
 			return false;
 		}
