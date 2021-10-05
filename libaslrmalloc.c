@@ -621,54 +621,52 @@ void *reallocarray(void *ptr, size_t nmemb, size_t size) {
 #define ROUNDS2 16
 #endif
 
-volatile void *ptr, *ptr2; // Try to defeat compiler optimizations detecting malloc + free
-volatile void *ptrv[ROUNDS2];
-
 int main(void) {
 	for (int i = 0; i < ROUNDS1; i++) {
+		void *ptrv[ROUNDS2];
 		for (int j = 0; j < ROUNDS2; j++) {
 			ptrv[j] = malloc(1UL << i);
-			memset((void *)ptrv[j], 0, 1UL << i);
+			memset(ptrv[j], 0, 1UL << i);
 		}
 #if DEBUG_2
 		for (int j = 0; j < ROUNDS2; j++) {
-			ptrv[j] = realloc((void *)ptrv[j], (1UL << i) + 4096);
-			memset((void *)ptrv[j], 0, (1UL << i) + 4096);
-			ptrv[j] = realloc((void *)ptrv[j], (1UL << i));
-			memset((void *)ptrv[j], 0, 1UL << i);
+			ptrv[j] = realloc(ptrv[j], (1UL << i) + 4096);
+			memset(ptrv[j], 0, (1UL << i) + 4096);
+			ptrv[j] = realloc(ptrv[j], (1UL << i));
+			memset(ptrv[j], 0, 1UL << i);
 		}
 #endif
 		for (int j = 0; j < ROUNDS2; j++)
-			free((void *)ptrv[j]);
+			free(ptrv[j]);
 	}
 
 	errno = EBADF;
 	free(NULL);
 
-	ptr = malloc(0);
-	free((void *)ptr);
+	void *ptr = malloc(0);
+	free(ptr);
 
 	ptr = malloc(1);
-	size_t usable_size = malloc_usable_size((void *)ptr);
+	size_t usable_size = malloc_usable_size(ptr);
 	assert(usable_size >= 1);
-	memset((void *)ptr, 0, usable_size);
-	ptr = realloc((void *)ptr, 0); // Equal to free()
+	memset(ptr, 0, 1);
+	ptr = realloc(ptr, 0); // Equal to free()
 	assert(ptr == NULL);
 
 	ptr = calloc(0, 0);
-	free((void *)ptr);
+	free(ptr);
 
 	ptr = calloc(4096, 1);
-	memset((void *)ptr, 0, 4096);
-	ptr2 = calloc(4096, 4);
-	memset((void *)ptr2, 0, 4096 * 4);
-	free((void *)ptr);
-	free((void *)ptr2);
+	memset(ptr, 0, 4096);
+	void *ptr2 = calloc(4096, 4);
+	memset(ptr2, 0, 4096 * 4);
+	free(ptr);
+	free(ptr2);
 	assert(errno == EBADF);
 
 	ptr = malloc(1);
-	ptr = reallocarray((void *)ptr, 2048, 1);
-	free((void *)ptr);
+	ptr = reallocarray(ptr, 2048, 1);
+	free(ptr);
 
 	usable_size = malloc_usable_size(NULL);
 	assert(usable_size == 0);
@@ -682,12 +680,12 @@ int main(void) {
 
 	errno = EBADF;
 	ptr = malloc(1);
-	ptr2 = realloc((void *)ptr, (size_t)1024*1024*1024*1024*1024); // Test OOM
+	ptr2 = realloc(ptr, (size_t)1024*1024*1024*1024*1024); // Test OOM
 	assert(errno == ENOMEM && ptr2 == NULL);
 
 	errno = EBADF;
 	ptr = malloc(1);
-	ptr2 = reallocarray((void *)ptr, INT_MAX, INT_MAX);
+	ptr2 = reallocarray(ptr, INT_MAX, INT_MAX);
 	assert(errno == ENOMEM && ptr2 == NULL);
 
 	errno = EBADF;
