@@ -626,12 +626,16 @@ volatile void *ptrv[ROUNDS2];
 
 int main(void) {
 	for (int i = 0; i < ROUNDS1; i++) {
-		for (int j = 0; j < ROUNDS2; j++)
+		for (int j = 0; j < ROUNDS2; j++) {
 			ptrv[j] = malloc(1UL << i);
+			memset((void *)ptrv[j], 0, 1UL << i);
+		}
 #if DEBUG_2
 		for (int j = 0; j < ROUNDS2; j++) {
 			ptrv[j] = realloc((void *)ptrv[j], (1UL << i) + 4096);
+			memset((void *)ptrv[j], 0, (1UL << i) + 4096);
 			ptrv[j] = realloc((void *)ptrv[j], (1UL << i));
+			memset((void *)ptrv[j], 0, 1UL << i);
 		}
 #endif
 		for (int j = 0; j < ROUNDS2; j++)
@@ -647,6 +651,7 @@ int main(void) {
 	ptr = malloc(1);
 	size_t usable_size = malloc_usable_size((void *)ptr);
 	assert(usable_size >= 1);
+	memset((void *)ptr, 0, usable_size);
 	ptr = realloc((void *)ptr, 0); // Equal to free()
 	assert(ptr == NULL);
 
@@ -654,7 +659,9 @@ int main(void) {
 	free((void *)ptr);
 
 	ptr = calloc(4096, 1);
+	memset((void *)ptr, 0, 4096);
 	ptr2 = calloc(4096, 4);
+	memset((void *)ptr2, 0, 4096 * 4);
 	free((void *)ptr);
 	free((void *)ptr2);
 	assert(errno == EBADF);
