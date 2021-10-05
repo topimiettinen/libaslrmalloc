@@ -666,6 +666,10 @@ int main(void) {
 	free((void *)ptr2);
 	assert(errno == EBADF);
 
+	ptr = malloc(1);
+	ptr = reallocarray((void *)ptr, 2048, 1);
+	free((void *)ptr);
+
 	usable_size = malloc_usable_size(NULL);
 	assert(usable_size == 0);
 
@@ -679,6 +683,11 @@ int main(void) {
 	errno = EBADF;
 	ptr = malloc(1);
 	ptr2 = realloc((void *)ptr, (size_t)1024*1024*1024*1024*1024); // Test OOM
+	assert(errno == ENOMEM && ptr2 == NULL);
+
+	errno = EBADF;
+	ptr = malloc(1);
+	ptr2 = reallocarray((void *)ptr, INT_MAX, INT_MAX);
 	assert(errno == ENOMEM && ptr2 == NULL);
 
 	errno = EBADF;
