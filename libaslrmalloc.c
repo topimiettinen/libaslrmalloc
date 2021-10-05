@@ -624,6 +624,9 @@ void *reallocarray(void *ptr, size_t nmemb, size_t size) {
 #ifndef ROUNDS2
 #define ROUNDS2 16
 #endif
+#ifndef ROUNDS3
+#define ROUNDS3 129
+#endif
 
 int main(void) {
 	for (int i = 0; i < ROUNDS1; i++) {
@@ -643,6 +646,14 @@ int main(void) {
 		for (int j = 0; j < ROUNDS2; j++)
 			free(ptrv[j]);
 	}
+
+	void *ptrv[ROUNDS3];
+	for (int j = 0; j < ROUNDS3; j++) {
+		ptrv[j] = malloc(2048);
+		memset(ptrv[j], 0, 2048);
+	}
+	for (int j = 0; j < ROUNDS3; j++)
+		free(ptrv[j]);
 
 	errno = EBADF;
 	free(NULL);
