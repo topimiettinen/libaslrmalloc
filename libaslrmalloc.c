@@ -278,15 +278,19 @@ static void pagetable_free(struct small_pagelist *entry) {
 			// Check for emptiness excluding the last bit (entry used for managing the page itself)
 			if (bitmap_is_empty(p->bitmap, last_index(sizeof(struct small_pagelist)))) {
 				DPRINTF("unmap pagetable %p\n", p->page);
+				// Because the page contains the entry
+				// managing itself, grab next entry
+				// pointer before the page is unmapped
+				struct small_pagelist *next = p->next;
 				int r = munmap(p->page, PAGE_SIZE);
 				if (r < 0) {
 					perror("munmap");
 					abort();
 				}
 				if (prev == p)
-					state->pagetables = p->next;
+					state->pagetables = next;
 				else
-					prev->next = p->next;
+					prev->next = next;
 			}
 			return;
 		}
