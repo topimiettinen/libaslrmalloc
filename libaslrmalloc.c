@@ -593,6 +593,18 @@ void *realloc(void *ptr, size_t new_size)
 	return ret;
 }
 
+void *reallocarray(void *ptr, size_t nmemb, size_t size) {
+	if (!state)
+		init();
+
+	__uint128_t new_size = (__uint128_t)nmemb * (__uint128_t)size;
+	if (new_size > (__uint128_t)(1ULL << malloc_user_va_space_bits)) {
+		errno = ENOMEM;
+		return NULL;
+	}
+	return realloc(ptr, (size_t)new_size);
+}
+
 #endif
 
 #if DEBUG
