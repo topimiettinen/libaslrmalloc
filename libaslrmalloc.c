@@ -457,7 +457,7 @@ size_t malloc_usable_size(void *ptr) {
 		DPRINTF(".page=%p .size=%lx\n", p->page, p->size);
 		if (((unsigned long)p->page & PAGE_MASK) == address) {
 			DPRINTF("found\n");
-			ret = p->size;
+			ret = PAGE_ALIGN_UP(p->size);
 			goto finish;
 		}
 	}
