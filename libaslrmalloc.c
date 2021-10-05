@@ -5,6 +5,8 @@
   gcc -o libaslrmalloc.so libaslrmalloc.c -fPIC -Wall -g -nostdlib -shared -O
  or as a test program
   gcc -o test libaslrmalloc.c -Wall -g -DDEBUG=1
+ or to verify that libc malloc agrees with the test suite
+  gcc -o test libaslrmalloc.c -Wall -g -DDEBUG=1 -DLIBC
 */
 //#define DEBUG 1
 
@@ -17,8 +19,10 @@
 #define DPRINTF(format, ...) fprintf(stderr, "%s: " format, __FUNCTION__, ##__VA_ARGS__)
 #define DPRINTF_NOPREFIX(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
 #else
-#define DPRINTF(...)
-#define DPRINTF_NOPREFIX(...)
+//#define DPRINTF(format, ...) do { char _buf[1024]; int _r = snprintf(_buf, sizeof(_buf), "%s: " format, __FUNCTION__, ##__VA_ARGS__); if (_r > 0) _r = write(2, _buf, _r); (void)_r; } while (0)
+//#define DPRINTF_NOPREFIX(format, ...) do { char _buf[1024]; int _r = snprintf(_buf, sizeof(_buf), format, ##__VA_ARGS__); if (_r > 0) _r = write(2, _buf, _r); (void)_r; } while (0)
+#define DPRINTF(format, ...) do {} while (0)
+#define DPRINTF_NOPREFIX(format, ...) do {} while (0)
 #endif
 #endif
 
@@ -433,7 +437,9 @@ size_t malloc_usable_size(void *ptr) {
 	if (!ptr)
 		goto finish;
 
-	DPRINTF("pagetables .page=%p .bm=%lx\n", state->pagetables->page, state->pagetables->bitmap[0]);
+	DPRINTF("malloc_usable_size(%p)\n", ptr);
+	pagetables_dump("malloc_usable_size");
+
 	unsigned long address = (unsigned long)ptr & PAGE_MASK;
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
 		for (struct small_pagelist *p = state->small_pages[i]; p; p = p->next) {
