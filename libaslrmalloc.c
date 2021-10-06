@@ -307,7 +307,7 @@ static void pagetable_free(struct small_pagelist *entry) {
   - global state
   - pagelist for the initial page
 */
-static void init(void) {
+static __attribute__((constructor)) void init(void) {
 	// Get number of virtual address bits. There are lots of different values from 36 to 57 (https://en.wikipedia.org/wiki/X86)
 	unsigned int eax, unused;
 	int r = __get_cpuid(0x80000008, &eax, &unused, &unused, &unused);
@@ -349,9 +349,6 @@ static void init(void) {
 static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 	int ret_errno = errno;
 	void *ret = NULL;
-
-	if (!state)
-		init();
 
 	DPRINTF("malloc(%lu)\n", size);
 	if (size == 0)
@@ -441,9 +438,6 @@ size_t malloc_usable_size(void *ptr) {
 	int saved_errno = errno;
 	size_t ret = 0;
 
-	if (!state)
-		init();
-
 	if (!ptr)
 		goto finish;
 
@@ -482,9 +476,6 @@ size_t malloc_usable_size(void *ptr) {
 void free(void *ptr)
 {
 	int saved_errno = errno;
-
-	if (!state)
-		init();
 
 	if (!ptr)
 		goto finish;
@@ -558,9 +549,6 @@ void *calloc(size_t nmemb, size_t size)
 {
 	int saved_errno = errno;
 
-	if (!state)
-		init();
-
 	__uint128_t new_size = (__uint128_t)nmemb * (__uint128_t)size;
 	if (new_size > (__uint128_t)(1ULL << malloc_user_va_space_bits)) {
 		errno = ENOMEM;
@@ -577,9 +565,6 @@ void *calloc(size_t nmemb, size_t size)
 void *realloc(void *ptr, size_t new_size)
 {
 	int saved_errno = errno;
-
-	if (!state)
-		init();
 
 	if (!ptr)
 		return malloc(new_size);
@@ -610,9 +595,6 @@ void *realloc(void *ptr, size_t new_size)
 }
 
 void *reallocarray(void *ptr, size_t nmemb, size_t size) {
-	if (!state)
-		init();
-
 	__uint128_t new_size = (__uint128_t)nmemb * (__uint128_t)size;
 	if (new_size > (__uint128_t)(1ULL << malloc_user_va_space_bits)) {
 		errno = ENOMEM;
@@ -623,9 +605,6 @@ void *reallocarray(void *ptr, size_t nmemb, size_t size) {
 
 int posix_memalign(void **memptr, size_t alignment, size_t size) {
 	int saved_errno = errno;
-
-	if (!state)
-		init();
 
 	DPRINTF("posix_memalign(%p, %lx, %lx)\n", memptr, alignment, size);
 	if ((alignment & (sizeof(void *) - 1)) != 0 || !powerof2(alignment)) {
