@@ -13,9 +13,11 @@
 #if !LIBC
 #if DEBUG
 #define malloc xmalloc
+#define malloc_usable_size xmalloc_usable_size
 #define free xfree
 #define calloc xcalloc
 #define realloc xrealloc
+#define reallocarray xreallocarray
 #define posix_memalign xposix_memalign
 #define DPRINTF(format, ...) fprintf(stderr, "%s: " format, __FUNCTION__, ##__VA_ARGS__)
 #define DPRINTF_NOPREFIX(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
