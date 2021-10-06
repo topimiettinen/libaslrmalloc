@@ -353,7 +353,7 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 
 	DPRINTF("malloc(%lu)\n", size);
 	if (size == 0)
-		goto finish;
+		size = 1;
 
 	if (size > (1UL << malloc_user_va_space_bits)) {
 		ret_errno = ENOMEM;
