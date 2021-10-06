@@ -16,6 +16,7 @@
 #define free xfree
 #define calloc xcalloc
 #define realloc xrealloc
+#define posix_memalign xposix_memalign
 #define DPRINTF(format, ...) fprintf(stderr, "%s: " format, __FUNCTION__, ##__VA_ARGS__)
 #define DPRINTF_NOPREFIX(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
 #else
@@ -89,14 +90,14 @@ static unsigned long malloc_random_address_mask;
 static int malloc_getrandom_bytes;
 static int malloc_user_va_space_bits;
 
-static void *mmap_random(size_t size) {
+static void *mmap_random(size_t size, unsigned long extra_mask) {
 	for (;;) {
 		unsigned long addr;
 		ssize_t r = getrandom(&addr, malloc_getrandom_bytes, GRND_RANDOM);
 		if (r < malloc_getrandom_bytes)
 			continue;
 		addr <<= PAGE_BITS;
-		addr &= malloc_random_address_mask;
+		addr &= malloc_random_address_mask & extra_mask;
 		void *ret = mmap((void *)addr, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_PRIVATE, -1, 0);
 		if (ret == MAP_FAILED) {
 			if (errno == EEXIST || errno == EINVAL)
@@ -245,7 +246,7 @@ static struct small_pagelist *pagetable_new(void) {
 			}
 		}
 
-		void *page = mmap_random(PAGE_SIZE);
+		void *page = mmap_random(PAGE_SIZE, -1);
 		if (page == MAP_FAILED)
 			goto oom;
 
@@ -320,7 +321,7 @@ static void init(void) {
 	unsigned long temp_bitmap = 0;
 
 	// Allocate for initial state (exception for slab use, occupying multiple slabs) and first pagetables
-	pagetables = mmap_random(PAGE_SIZE);
+	pagetables = mmap_random(PAGE_SIZE, -1);
 	if (pagetables == MAP_FAILED)
 		abort();
 
@@ -343,8 +344,7 @@ static void init(void) {
 	pagetables_dump("initial");
 }
 
-void *malloc(size_t size)
-{
+static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 	int ret_errno = errno;
 	void *ret = NULL;
 
@@ -369,7 +369,7 @@ void *malloc(size_t size)
 		struct large_pagelist *new = (struct large_pagelist *)pagetable_new();
 		if (!new)
 			goto oom;
-		void *page = mmap_random(real_size);
+		void *page = mmap_random(real_size, extra_mask);
 		if (page == MAP_FAILED)
 			goto oom;
 
@@ -401,7 +401,7 @@ void *malloc(size_t size)
 			if (!new)
 				goto oom;
 
-			void *page = mmap_random(PAGE_SIZE);
+			void *page = mmap_random(PAGE_SIZE, extra_mask);
 			if (page == MAP_FAILED)
 				goto oom;
 
@@ -429,6 +429,10 @@ void *malloc(size_t size)
 	pthread_mutex_unlock(&malloc_lock);
 	errno = ENOMEM;
 	return NULL;
+}
+
+void *malloc(size_t size) {
+	return aligned_malloc(size, -1);
 }
 
 size_t malloc_usable_size(void *ptr) {
@@ -615,6 +619,34 @@ void *reallocarray(void *ptr, size_t nmemb, size_t size) {
 	return realloc(ptr, (size_t)new_size);
 }
 
+int posix_memalign(void **memptr, size_t alignment, size_t size) {
+	int saved_errno = errno;
+
+	if (!state)
+		init();
+
+	DPRINTF("posix_memalign(%p, %lx, %lx)\n", memptr, alignment, size);
+	if ((alignment & (sizeof(void *) - 1)) != 0 || !powerof2(alignment)) {
+		DPRINTF("returning EINVAL\n");
+		return EINVAL;
+	}
+
+	unsigned long extra_mask = ~(alignment - 1);
+	DPRINTF("calling aligned_malloc(%lx, %lx)\n", size, extra_mask);
+	void *ptr = aligned_malloc(size, extra_mask);
+	if (ptr) {
+		*memptr = ptr;
+		DPRINTF("returning %p\n", ptr);
+		errno = saved_errno;
+		return 0;
+	} else {
+		int ret = errno;
+		DPRINTF("returning error: %m\n");
+		errno = saved_errno;
+		return ret;
+	}
+}
+
 #endif
 
 #if DEBUG
@@ -686,6 +718,21 @@ int main(void) {
 	usable_size = malloc_usable_size(NULL);
 	assert(usable_size == 0);
 
+	errno = EBADF;
+	ptr = (void *)(unsigned long)1234;
+	int r = posix_memalign(&ptr, 3, 1);
+	assert(errno == EBADF && r == EINVAL && ptr == (void *)(unsigned long)1234);
+
+	errno = EBADF;
+	r = posix_memalign(&ptr, 48, 1);
+	assert(errno == EBADF && r == EINVAL && ptr == (void *)(unsigned long)1234);
+
+	errno = EBADF;
+	r = posix_memalign(&ptr, 8192, 1);
+	assert(errno == EBADF && r == 0);
+	free(ptr);
+
+	errno = EBADF;
 	ptr = malloc((size_t)1024*1024*1024*1024*1024); // Test OOM
 	assert(errno == ENOMEM);
 
@@ -706,6 +753,11 @@ int main(void) {
 	errno = EBADF;
 	ptr = calloc(INT_MAX, INT_MAX);
 	assert(errno == ENOMEM);
+
+	ptr = (void *)(unsigned long)1234;
+	r = posix_memalign(&ptr, 8192, (size_t)1024*1024*1024*1024*1024); // Test OOM
+	assert(r == ENOMEM && ptr == (void *)(unsigned long)1234);
+
 	return 0;
 }
 #endif
