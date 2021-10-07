@@ -19,6 +19,7 @@
 #define realloc xrealloc
 #define reallocarray xreallocarray
 #define posix_memalign xposix_memalign
+#define aligned_alloc xaligned_alloc
 #define DPRINTF(format, ...) fprintf(stderr, "%s: " format, __FUNCTION__, ##__VA_ARGS__)
 #define DPRINTF_NOPREFIX(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
 #else
@@ -640,6 +641,15 @@ int posix_memalign(void **memptr, size_t alignment, size_t size) {
 	}
 }
 
+void *aligned_alloc(size_t alignment, size_t size) {
+	DPRINTF("aligned_alloc(%lx, %lx)\n", alignment, size);
+	void *ret = NULL;
+	int r = posix_memalign(&ret, alignment, size);
+	if (r != 0)
+		errno = r;
+	return ret;
+}
+
 #endif
 
 #if DEBUG
@@ -725,6 +735,9 @@ int main(void) {
 	assert(errno == EBADF && r == 0);
 	free(ptr);
 
+	ptr = aligned_alloc(8192, 1);
+	free(ptr);
+
 	errno = EBADF;
 	ptr = malloc((size_t)1024*1024*1024*1024*1024); // Test OOM
 	assert(errno == ENOMEM);
@@ -751,6 +764,9 @@ int main(void) {
 	r = posix_memalign(&ptr, 8192, (size_t)1024*1024*1024*1024*1024); // Test OOM
 	assert(r == ENOMEM && ptr == (void *)(unsigned long)1234);
 
+	errno = EBADF;
+	ptr = aligned_alloc(8192, (size_t)1024*1024*1024*1024*1024); // Test OOM
+	assert(r == ENOMEM);
 	return 0;
 }
 #endif
