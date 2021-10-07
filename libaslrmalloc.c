@@ -308,6 +308,9 @@ static void pagetable_free(struct small_pagelist *entry) {
   - pagelist for the initial page
 */
 static __attribute__((constructor)) void init(void) {
+	if (state)
+		return;
+
 	// Get number of virtual address bits. There are lots of different values from 36 to 57 (https://en.wikipedia.org/wiki/X86)
 	unsigned int eax, unused;
 	int r = __get_cpuid(0x80000008, &eax, &unused, &unused, &unused);
@@ -351,6 +354,9 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 	void *ret = NULL;
 
 	DPRINTF("malloc(%lu)\n", size);
+	if (!state)
+		init();
+
 	if (size == 0)
 		size = 1;
 
@@ -441,6 +447,9 @@ size_t malloc_usable_size(void *ptr) {
 	if (!ptr)
 		goto finish;
 
+	if (!state)
+		init();
+
 	DPRINTF("malloc_usable_size(%p)\n", ptr);
 	pagetables_dump("malloc_usable_size");
 
@@ -479,6 +488,9 @@ void free(void *ptr)
 
 	if (!ptr)
 		goto finish;
+
+	if (!state)
+		init();
 
 	DPRINTF("free(%p)\n", ptr);
 	pagetables_dump("pre free");
