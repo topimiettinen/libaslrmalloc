@@ -8,7 +8,7 @@ Other goals such as
 - efficiency of memory use
 - impacts to CPU page tables or caches
 - kernel's ability to handle large number of VMAs
-- performance of `malloc()`, `realloc()` or `free()`
+- performance of `malloc()`, `realloc()`, `free()` or other memory allocation functions
 - usability on 32 bit systems due to heavy memory fragmentation
 - portability
 
@@ -25,9 +25,13 @@ the old memory may never be referenced after `realloc()` or `free()`.
 ## Specification
 
 The purpose and operation of the allocation functions is described in detail in the manual pages:
-- Linux [malloc(3)](https://www.man7.org/linux/man-pages/man3/malloc.3.html), also describes `free()`, `calloc()`, `realloc()`
+- Linux/Glibc [malloc(3)](https://www.man7.org/linux/man-pages/man3/malloc.3.html), also describes `free()`, `calloc()`, `realloc()` and `reallocarray()`
+- Linux/Glibc [malloc_usable_size(3)](https://www.man7.org/linux/man-pages/man3/malloc_usable_size.3.html)
+- Linux/Glibc [posix_memalign(3)](https://www.man7.org/linux/man-pages/man3/posix_memalign.3.html), also describes `aligned_alloc()`
 - Posix [malloc(3p)](https://www.man7.org/linux/man-pages/man3/malloc.3p.html), [free(3p)](https://www.man7.org/linux/man-pages/man3/free.3p.html),
-[calloc(3p)](https://www.man7.org/linux/man-pages/man3/calloc.3p.html), [realloc(3p)](https://www.man7.org/linux/man-pages/man3/realloc.3p.html)
+[calloc(3p)](https://www.man7.org/linux/man-pages/man3/calloc.3p.html), [realloc(3p)](https://www.man7.org/linux/man-pages/man3/realloc.3p.html) and  [posix_memalign(3p)](https://www.man7.org/linux/man-pages/man3/posix_memalign.3p.html)
+
+Glibc's [description](https://www.gnu.org/software/libc/manual/html_node/Replacing-malloc.html) how to replace the built-in allocator.
 
 ## Implementation
 Small allocations are taken from slabs with sizes of 16, 32, 64, 128, 256, 512, 1024 or 2048 bytes.
@@ -45,8 +49,10 @@ As an exception, the main state occupies several smaller slabs, since it will ne
 New memory is allocated with `mmap()` and the address of the new memory is randomized with `getrandom()`.
 Flag `MAP_FIXED_NOREPLACE` is used to avoid mapping new memory over an existing memory mapping.
 If the kernel rejects the address, `mmap()` is retried with a new random address.
-In the 47 bit address space available on 64 bit processors, this should happen very rarely.
+In the 47 bit address space available on many 64 bit processors, this should happen very rarely.
 Using this library on 32 bit systems may be a bad idea.
+
+`sbrk()`/`brk()` is not used at all. This function returns predictable addresses and it should never be used.
 
 The library will also aggressively unmap any `free()`d memory or if that is not possible,
 fill the memory with non-zero bytes (inspired by BSD `malloc()` implementations).
@@ -92,11 +98,12 @@ Global state could be randomized a bit by splitting it to page table slab sized 
 The design should be very easy to extend to multithreaded allocator: each thread would get it's own global state pointer (as thread local storage)
 and own global structure, so there would be no locking issues.
 Freeing memory from a different thread would not be possible or very hard.
-In any case, the design should be made multithread safe.
+
 Perhaps mutexes could be fine grained (one for internal page table, one for each small and one for the large page table).
 
-Implement [posix_memalign()](https://www.man7.org/linux/man-pages/man3/posix_memalign.3.html).
-In case a huge alignment (bad for ASLR) is requested, hugepages could be used.
+Debugging could be more robust in multithread environment and early library startup.
+
+In case a huge alignment (bad for ASLR) is requested, hugepages could be used for `posix_memalign()` and `aligned_alloc()`.
 
 Guard pages (`mprotect(,, PROT_NONE)`) could be used before and after the allocated pages, to prevent other mappings getting too near.
 Maybe the guard pages could be even larger than one page, for example fill the entire 2MB page table entry.
@@ -104,4 +111,11 @@ That should only affect kernel's internal VMA structures, not CPU page tables.
 
 On Intel CPUs, `pkey_mprotect()` could be used to protect internal structures with [pkeys](https://man7.org/linux/man-pages/man7/pkeys.7.html) (weakly).
 
-Full pages could be kept in separate page table lists, so they wouldn't be consulted when looking for a free slab.
+Fully used slab pages could be kept in separate page table lists, so they wouldn't be consulted when looking for a free slab.
+
+Filling memory with junk could be made runtime configurable.
+
+Maybe some debug messages could be enabled at runtime.
+
+Some Glibc specific deviations (`malloc(0)`, `calloc(X, Y)` where X * Y == 0, `errno` handling of `posix_memalign()`) could be made configurable
+(portability check mode?) to help portability to non-Glibc systems. For normal use, it's better to match Glibc in such cases.
