@@ -1,13 +1,30 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later OR BSD-3-Clause
-#define FILL_JUNK 'Z'
 /*
- Compile for shared library
-  gcc -o libaslrmalloc.so libaslrmalloc.c -fPIC -Wall -g -nostdlib -shared -O
- or as a test program
-  gcc -o test libaslrmalloc.c -Wall -g -DDEBUG=1
- or to verify that libc malloc agrees with the test suite
-  gcc -o test libaslrmalloc.c -Wall -g -DDEBUG=1 -DLIBC
+  libaslrmalloc is a LD_PRELOADed library which replaces malloc() and
+  other memory allocation functions from C library. The main design
+  goal is not performance or memory consumption but to increase
+  address space layout randomization (ASLR), hence the name. This is
+  achieved by not trying to keep the pages together, forcing the
+  kernel to map pages at random addresses and unmapping old memory
+  immediately when possible.
+
+  Compile as a shared library:
+    gcc -o libaslrmalloc.so libaslrmalloc.c -fPIC -Wall -g -nostdlib -shared -O
+  or as a test program:
+    gcc -o test libaslrmalloc.c -Wall -g -DDEBUG=1
+  or to verify that libc malloc agrees with the test suite:
+    gcc -o test libaslrmalloc.c -Wall -g -DDEBUG=1 -DLIBC
+
+  Usage:
+    LD_PRELOAD=/path/to/libaslrmalloc.so program
 */
+
+// Fill character for free()d memory, comment out to disable
+// TODO make runtime configurable (secure_getenv())?
+#define FILL_JUNK 'Z'
+
+// TODO maybe make some debug messages runtime configurable
+// (secure_getenv())?
 //#define DEBUG 1
 
 #if !LIBC
@@ -22,13 +39,29 @@
 #define aligned_alloc xaligned_alloc
 #define DPRINTF(format, ...) fprintf(stderr, "%s: " format, __FUNCTION__, ##__VA_ARGS__)
 #define DPRINTF_NOPREFIX(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
-#else
-//#define DPRINTF(format, ...) do { char _buf[1024]; int _r = snprintf(_buf, sizeof(_buf), "%s: " format, __FUNCTION__, ##__VA_ARGS__); if (_r > 0) _r = write(2, _buf, _r); (void)_r; } while (0)
-//#define DPRINTF_NOPREFIX(format, ...) do { char _buf[1024]; int _r = snprintf(_buf, sizeof(_buf), format, ##__VA_ARGS__); if (_r > 0) _r = write(2, _buf, _r); (void)_r; } while (0)
+#else // !DEBUG
+#if DEBUG_ALWAYS
+#define DPRINTF(format, ...) do {					\
+		char _buf[1024];					\
+		int _r = snprintf(_buf, sizeof(_buf), "%s: " format, __FUNCTION__, \
+				  ##__VA_ARGS__);			\
+		if (_r > 0)						\
+			_r = write(2, _buf, _r);			\
+		(void)_r;						\
+	} while (0)
+#define DPRINTF_NOPREFIX(format, ...) do {				\
+		char _buf[1024];					\
+		int _r = snprintf(_buf, sizeof(_buf), format, ##__VA_ARGS__); \
+		if (_r > 0)						\
+			_r = write(2, _buf, _r); \
+		(void)_r; \
+	} while (0)
+#else // DEBUG_ALWAYS
 #define DPRINTF(format, ...) do {} while (0)
 #define DPRINTF_NOPREFIX(format, ...) do {} while (0)
-#endif
-#endif
+#endif // DEBUG_ALWAYS
+#endif // DEBUG
+#endif // !LIBC
 
 #include <assert.h>
 #include <cpuid.h>
@@ -67,32 +100,52 @@
 // Worst case: one bit for each smallest item (MIN_ALLOC_SIZE) per page
 #define BITMAP_ULONGS (PAGE_SIZE / MIN_ALLOC_SIZE / ULONG_SIZE)
 
-// TODO hash tables?
+// TODO use hash tables or modern tree structures to speed up free()
+// without weakening ASLR?
+
+/*
+  small_pagelist is used for allocating small (16 ... 2048) byte
+  slabs and also page tables for internal use.
+*/
 struct small_pagelist {
 	struct small_pagelist *next;
 	void *page;
 	unsigned long bitmap[BITMAP_ULONGS];
 };
 
+/*
+  large_pagelist is used for allocating multiples of page size blocks.
+*/
 struct large_pagelist {
 	struct large_pagelist *next;
 	void *page;
 	size_t size;
 };
 
+/*
+  Global state for the library.
+*/
 struct malloc_state {
 	// b16, b32, b64, b128, b256, b512, b1024, b2048;
 	struct small_pagelist *pagetables;
 	struct small_pagelist *small_pages[MAX_SIZE_CLASSES];
 	struct large_pagelist *large_pages;
 };
-
 static struct malloc_state *state;
+
+// TODO replace global lock with a lock for each list?
 static pthread_mutex_t malloc_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned long malloc_random_address_mask;
 static int malloc_getrandom_bytes;
 static int malloc_user_va_space_bits;
 
+// TODO: possibly use MAP_HUGETLB | MAP_HUGE_2MB in case the alignment
+// is already that high
+/*
+  map pages at a random address, possibly aligned more strictly.
+  MAP_FIXED_NOREPLACE is used to avoid already existing mappings. If
+  that happens (errno == EEXIST), retry,
+*/
 static void *mmap_random(size_t size, unsigned long extra_mask) {
 	for (;;) {
 		unsigned long addr;
@@ -101,7 +154,9 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 			continue;
 		addr <<= PAGE_BITS;
 		addr &= malloc_random_address_mask & extra_mask;
-		void *ret = mmap((void *)addr, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_PRIVATE, -1, 0);
+		void *ret = mmap((void *)addr, size, PROT_READ | PROT_WRITE,
+				 MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_PRIVATE,
+				 -1, 0);
 		if (ret == MAP_FAILED) {
 			if (errno == EEXIST || errno == EINVAL)
 				continue;
@@ -113,6 +168,9 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 	}
 }
 
+/*
+  Find a slab class suitable for the size of the (small) allocation.
+*/
 static unsigned int get_index(size_t size) {
 	for (unsigned int index = MIN_ALLOC_BITS; index < PAGE_BITS; index++)
 		if (size <= (1UL << index))
@@ -120,6 +178,9 @@ static unsigned int get_index(size_t size) {
 	return -1;
 }
 
+/*
+  Index for a slab at the end of page, used for managing the page itself.
+*/
 static unsigned int last_index(size_t size) {
 	for (unsigned int index = MIN_ALLOC_BITS; index < PAGE_BITS; index++)
 		if (size <= (1UL << index))
@@ -127,6 +188,10 @@ static unsigned int last_index(size_t size) {
 	return -1;
 }
 
+/*
+  Get size aligned up to suitable slab size (all powers of 2 from 16 up to
+  page size).
+*/
 static unsigned int align_up_size(size_t size) {
 	for (unsigned int index = MIN_ALLOC_BITS; index < PAGE_BITS; index++)
 		if (size <= (1UL << index))
@@ -134,20 +199,33 @@ static unsigned int align_up_size(size_t size) {
 	return PAGE_ALIGN_UP(size);
 }
 
-// Size of one bitmap structure in bits for one complete page
+/*
+  Get number of bits in a bitmap: number of slabs in one complete page.
+*/
 static unsigned int bitmap_bits(size_t size) {
 	return PAGE_SIZE / align_up_size(size);
 }
 
+/*
+  Set bit in bitmap: indicates that the slab is in use.
+*/
 static void bitmap_set(unsigned long *bitmap, unsigned int bit) {
 	bitmap[bit >> ULONG_BITS] |= 1UL << (bit & ~ULONG_MASK);
 }
 
+/*
+  Clear bit in bitmap: slab is free.
+*/
 static void bitmap_clear(unsigned long *bitmap, unsigned int bit) {
 	bitmap[bit >> ULONG_BITS] &= ~(1UL << (bit & ~ULONG_MASK));
 }
 
 // TODO free item could be found in random order instead of first
+// clear LSB
+/*
+  Find first clear (free slab) bit in the bitmap. Not all words in the
+  bitmap are used in full.
+*/
 static int bitmap_find_first_clear(const unsigned long *bitmap, unsigned int bitmap_bits) {
 	DPRINTF("bitmap_bits %u (%u words)\n", bitmap_bits, bitmap_bits >> ULONG_BITS);
 
@@ -159,7 +237,8 @@ static int bitmap_find_first_clear(const unsigned long *bitmap, unsigned int bit
 			mask = (1UL << (bitmap_bits - b)) - 1;
 		unsigned long word = bitmap[i] & mask;
 
-		DPRINTF("checking index %u word %lx mask %lx bits left %d\n", i, word, mask, bitmap_bits - b);
+		DPRINTF("checking index %u word %lx mask %lx bits left %d\n",
+			i, word, mask, bitmap_bits - b);
 		if (word == 0) {
 			DPRINTF("returning %u\n", b);
 			return b;
@@ -177,6 +256,10 @@ static int bitmap_find_first_clear(const unsigned long *bitmap, unsigned int bit
 	return -1;
 }
 
+/*
+  Check if all bits in the bitmap are clear. Not all words in the
+  bitmap are used in full.
+*/
 static bool bitmap_is_empty(const unsigned long *bitmap, unsigned int bitmap_bits) {
 	DPRINTF("bitmap_bits %u (%u words)\n", bitmap_bits, bitmap_bits >> ULONG_BITS);
 
@@ -188,7 +271,8 @@ static bool bitmap_is_empty(const unsigned long *bitmap, unsigned int bitmap_bit
 			mask = (1UL << (bitmap_bits - b)) - 1;
 		unsigned long word = bitmap[i] & mask;
 
-		DPRINTF("checking index %u word %lx mask %lx bits left %d\n", i, word, mask, bitmap_bits - b);
+		DPRINTF("checking index %u word %lx mask %lx bits left %d\n",
+			i, word, mask, bitmap_bits - b);
 		if (word != 0) {
 			DPRINTF("returning false\n");
 			return false;
@@ -198,21 +282,30 @@ static bool bitmap_is_empty(const unsigned long *bitmap, unsigned int bitmap_bit
 	return true;
 }
 
+/*
+  Given a page, size class index of a slab and the number of the
+  position of the slab, return an address in the page.
+*/
 static void *ptr_to_offset_in_page(void *page, unsigned int size_index, int num) {
 	assert(size_index <= MAX_SIZE_CLASSES);
 	unsigned long offset = (1 << (size_index + MIN_ALLOC_BITS)) * num;
 	unsigned long address = ((unsigned long)page) + offset;
-	DPRINTF("offsetting page %p size index %u (0x%x) item number %d -> 0x%lx\n", page, size_index, 1 << (size_index + MIN_ALLOC_BITS), num, address);
+	DPRINTF("offsetting page %p size index %u (0x%x) item number %d -> 0x%lx\n",
+		page, size_index, 1 << (size_index + MIN_ALLOC_BITS), num, address);
 	return (void *)address;
 }
 
+/*
+  Dump all pagetables for debugging.
+*/
 static void pagetables_dump(const char *label) {
 #if DEBUG
 	unsigned int count;
 	struct small_pagelist *p;
 	count = 0;
 	for (p = state->pagetables, count = 0; p; p = p->next, count++) {
-		DPRINTF("%s: pagetables (%p) [%u] .page=%p bm=", label, p, count, p->page);
+		DPRINTF("%s: pagetables (%p) [%u] .page=%p bm=",
+			label, p, count, p->page);
 		for (int i = 0; i < BITMAP_ULONGS; i++)
 			DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
 		DPRINTF_NOPREFIX("\n");
@@ -221,7 +314,8 @@ static void pagetables_dump(const char *label) {
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
 		count = 0;
 		for (p = state->small_pages[i]; p; p = p->next, count++) {
-			DPRINTF("%s: small_pages[%u] (%p) [%u] .page=%p bm=", label, i, p, count, p->page);
+			DPRINTF("%s: small_pages[%u] (%p) [%u] .page=%p bm=",
+				label, i, p, count, p->page);
 			for (int i = 0; i < BITMAP_ULONGS; i++)
 				DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
 			DPRINTF_NOPREFIX("\n");
@@ -230,10 +324,15 @@ static void pagetables_dump(const char *label) {
 
 	count = 0;
 	for (struct large_pagelist *p = state->large_pages; p; p = p->next, count++)
-		DPRINTF("%s: large_pages (%p) [%u] .page=%p .size=%lx\n", label, p, count, p->page, p->size);
-#endif
+		DPRINTF("%s: large_pages (%p) [%u] .page=%p .size=%lx\n",
+			label, p, count, p->page, p->size);
+#endif // DEBUG
 }
 
+/*
+  Allocate a page table entry for internal use from dedicated page
+  table slabs.
+*/
 static struct small_pagelist *pagetable_new(void) {
 	struct small_pagelist *ret;
 
@@ -249,10 +348,15 @@ static struct small_pagelist *pagetable_new(void) {
 			}
 		}
 
+		// No free entries found, let's allocate a new page.
 		void *page = mmap_random(PAGE_SIZE, -1);
 		if (page == MAP_FAILED)
 			goto oom;
 
+		/*
+		  Mark allocation for the page table entry for
+		  managing the page itself in the bitmap.
+		*/
 		// TODO offset could be randomized instead of last index
 		int offset = last_index(sizeof(*ret));
 		struct small_pagelist *new = ptr_to_offset_in_page(page, index, offset);
@@ -260,6 +364,7 @@ static struct small_pagelist *pagetable_new(void) {
 		bitmap_set(new->bitmap, offset);
 		new->next = state->pagetables;
 		DPRINTF("new pagetable %p page %p\n", new, new->page);
+		// New page is inserted at head of list, retry.
 		state->pagetables = new;
 	}
 
@@ -270,21 +375,31 @@ static struct small_pagelist *pagetable_new(void) {
 	return NULL;
 }
 
+/*
+  Free a page table entry.
+*/
 static void pagetable_free(struct small_pagelist *entry) {
 	int size_index = get_index(sizeof(struct small_pagelist));
 	for (struct small_pagelist *p = state->pagetables, *prev = p; p; prev = p, p = p->next) {
 		DPRINTF(".page=%p bm=%lx\n", p->page, p->bitmap[0]);
 		if (((unsigned long)p->page & PAGE_MASK) == ((unsigned long)entry & PAGE_MASK)) {
+			// Calculate the number of the entry for its address using the size class
 			unsigned int bit = ((unsigned long)entry & ~PAGE_MASK) >> (size_index + MIN_ALLOC_BITS);
-			DPRINTF("found match %p == %p, clearing bit %u (index %d)\n", entry, p->page, bit, size_index);
+			DPRINTF("found match %p == %p, clearing bit %u (index %d)\n",
+				entry, p->page, bit, size_index);
 			bitmap_clear(p->bitmap, bit);
 
-			// Check for emptiness excluding the last bit (entry used for managing the page itself)
+			/*
+			  Check for emptiness excluding the last bit
+			  (entry used for managing the page itself)
+			*/
 			if (bitmap_is_empty(p->bitmap, last_index(sizeof(struct small_pagelist)))) {
 				DPRINTF("unmap pagetable %p\n", p->page);
-				// Because the page contains the entry
-				// managing itself, grab next entry
-				// pointer before the page is unmapped
+				/*
+				  Because the page contains the entry
+				  for managing itself, grab next entry
+				  pointer before the page is unmapped.
+				*/
 				struct small_pagelist *next = p->next;
 				int r = munmap(p->page, PAGE_SIZE);
 				if (r < 0) {
@@ -304,42 +419,73 @@ static void pagetable_free(struct small_pagelist *entry) {
 }
 
 /*
+  Initialization of the global state.
+
   We need to allocate at least
   - global state
   - pagelist for the initial page
 */
 static __attribute__((constructor)) void init(void) {
+	/*
+	  Despite using the ELF constructor, the library may be used
+	  (perhaps by other libraries' constructors) earlier. Ignore
+	  later calls.
+	*/
 	if (state)
 		return;
 
-	// Get number of virtual address bits. There are lots of different values from 36 to 57 (https://en.wikipedia.org/wiki/X86)
+	/*
+	   Get number of virtual address bits with CPUID
+	   instruction. There are lots of different values from 36 to
+	   57 (https://en.wikipedia.org/wiki/X86).
+	 */
 	unsigned int eax, unused;
 	int r = __get_cpuid(0x80000008, &eax, &unused, &unused, &unused);
+
+	/*
+	  Calculate a mask for requesting random addresses so that the
+	  kernel should accept them.
+	*/
 	malloc_user_va_space_bits = 36;
 	if (r == 1)
 		malloc_user_va_space_bits = ((eax >> 8) & 0xff) - 1;
 	malloc_random_address_mask = ((1UL << malloc_user_va_space_bits) - 1) & PAGE_MASK;
+
+	// Also calculate number of random bytes needed for each address
 	malloc_getrandom_bytes = (malloc_user_va_space_bits - PAGE_BITS + 7) / 8;
-	DPRINTF("%d VA space bits, mask %16.16lx, getrandom() bytes %d\n", malloc_user_va_space_bits, malloc_random_address_mask,
+	DPRINTF("%d VA space bits, mask %16.16lx, getrandom() bytes %d\n",
+		malloc_user_va_space_bits, malloc_random_address_mask,
 		malloc_getrandom_bytes);
 
-	void *pagetables;
+	/*
+	  A temporary bitmap is used to store allocation of the first
+	  page for global state and initial internal page tables. This
+	  will be moved to the actual internal page table later.
+	*/
 	unsigned long temp_bitmap = 0;
 
-	// Allocate for initial state (exception for slab use, occupying multiple slabs) and first pagetables
-	pagetables = mmap_random(PAGE_SIZE, -1);
+	/*
+	  Allocate a slab page for global state and initial internal
+	  pagetables. The global state is an exception for slab use
+	  because it occupies multiple slabs. It will never be freed,
+	  so this is OK (unless the global state should be freed in
+	  the rare case of all allocations get freed).
+	*/
+	void *pagetables = mmap_random(PAGE_SIZE, -1);
 	if (pagetables == MAP_FAILED)
 		abort();
 
-	// Mark allocation for global state
+	// Mark slab allocation for global state in the bitmap.
 	int pages_index = get_index(sizeof(struct small_pagelist));
 	// TODO offset could be randomized instead of 0
 	int offset = 0;
 	state = ptr_to_offset_in_page(pagetables, pages_index, offset);
-	for (unsigned int i = offset; i < offset + align_up_size(sizeof(*state)) / align_up_size(sizeof(struct small_pagelist)); i++)
+	for (unsigned int i = offset;
+	     i < offset + align_up_size(sizeof(*state)) / align_up_size(sizeof(struct small_pagelist));
+	     i++)
 		bitmap_set(&temp_bitmap, i);
 
-	// Mark allocation for page tables
+	// Mark allocation for initial internal page tables in the bitmap.
 	// TODO offset could be randomized instead of last index
 	offset = last_index(sizeof(struct small_pagelist));
 	bitmap_set(&temp_bitmap, offset);
@@ -354,10 +500,16 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 	int ret_errno = errno;
 	void *ret = NULL;
 
-	DPRINTF("malloc(%lu)\n", size);
 	if (!state)
 		init();
 
+	DPRINTF("aligned_malloc(%lu, %lx)\n", size, extra_mask);
+	/*
+	  The manual page says that malloc(0) may return NULL but
+	  sadly some applications expect it to return accessible
+	  memory and Glibc does that.
+	*/
+	// TODO make runtime configrable?
 	if (size == 0)
 		size = 1;
 
@@ -366,11 +518,14 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 		goto finish;
 	}
 
+	// Get slab size class for the requested size.
 	unsigned int index = get_index(size);
 	size_t real_size;
 	if (index == (unsigned int)-1) {
 		// New large allocation
 		real_size = PAGE_ALIGN_UP(size);
+
+		// TODO separate mutexes for large pages and page table entries?
 		pthread_mutex_lock(&malloc_lock);
 		struct large_pagelist *new = (struct large_pagelist *)pagetable_new();
 		if (!new)
@@ -390,8 +545,11 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 		pagetables_dump("pre malloc");
 		real_size = 1 << (index + MIN_ALLOC_BITS);
 
+		// TODO separate mutexes for each slab class and page table entries?
 		pthread_mutex_lock(&malloc_lock);
+
 		for (;;) {
+			// Try to find a free entry in the free slabs
 			for (struct small_pagelist *p = state->small_pages[index]; p; p = p->next) {
 				int offset = bitmap_find_first_clear(p->bitmap, bitmap_bits(size));
 
@@ -403,6 +561,7 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 				}
 			}
 
+			// Not found, allocate a new page
 			struct small_pagelist *new = pagetable_new();
 			if (!new)
 				goto oom;
@@ -412,35 +571,51 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 				goto oom;
 
 			new->page = page;
+			/*
+			  While the pages returned by mmap() will be
+			  zeroed by the kernel, the page table entry
+			  received may be an old recycled one, so
+			  let's clear the bitmap.
+			*/
 			memset(new->bitmap, 0, sizeof(new->bitmap));
 			new->next = state->small_pages[index];
-			DPRINTF("new small pagetable at index %u %p .page=%p\n", index, new, new->page);
+			DPRINTF("new small pagetable at index %u %p .page=%p\n",
+				index, new, new->page);
 			state->small_pages[index] = new;
 			pagetables_dump("post adding new page table");
 		}
 	}
  found:
+	// TODO more mutexes
 	pthread_mutex_unlock(&malloc_lock);
 #ifdef FILL_JUNK
 	// Fill memory with junk
+	// TODO make runtime configurable?
 	DPRINTF("fill junk %p +%lu\n", ret, real_size);
 	memset(ret, FILL_JUNK, real_size);
-#endif
+#endif // FILL_JUNK
 	pagetables_dump("post malloc");
  finish:
 	DPRINTF("returning %p\n", ret);
 	errno = ret_errno;
 	return ret;
  oom:
+	// TODO more mutexes
 	pthread_mutex_unlock(&malloc_lock);
 	errno = ENOMEM;
 	return NULL;
 }
 
+/*
+  See manual page for malloc().
+*/
 void *malloc(size_t size) {
 	return aligned_malloc(size, -1);
 }
 
+/*
+  Glibc extension. See manual page for malloc_usable_size().
+*/
 size_t malloc_usable_size(void *ptr) {
 	int saved_errno = errno;
 	size_t ret = 0;
@@ -454,6 +629,7 @@ size_t malloc_usable_size(void *ptr) {
 	DPRINTF("malloc_usable_size(%p)\n", ptr);
 	pagetables_dump("malloc_usable_size");
 
+	// Scan the slab pages if the page matches the pointer.
 	unsigned long address = (unsigned long)ptr & PAGE_MASK;
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
 		for (struct small_pagelist *p = state->small_pages[i]; p; p = p->next) {
@@ -465,6 +641,10 @@ size_t malloc_usable_size(void *ptr) {
 		}
 	}
 
+	/*
+	  Not found in the small slabs, so let's try the large
+	  allocations next.
+	*/
 	DPRINTF("trying large list\n");
 
 	for (struct large_pagelist *p = state->large_pages; p; p = p->next) {
@@ -475,6 +655,8 @@ size_t malloc_usable_size(void *ptr) {
 			goto finish;
 		}
 	}
+	// Not found, maybe a bug in the calling program?
+	// TODO Optionally just ignore the error?
 	fprintf(stderr, "malloc_usable_size: %p not found!\n", ptr);
 	abort();
  finish:
@@ -483,8 +665,11 @@ size_t malloc_usable_size(void *ptr) {
 	return ret;
 }
 
-void free(void *ptr)
-{
+/*
+  See manual page for free(). Glibc manual (3.2.5 Replacing malloc)
+  warns that errno shall be preserved.
+*/
+void free(void *ptr) {
 	int saved_errno = errno;
 
 	if (!ptr)
@@ -498,6 +683,8 @@ void free(void *ptr)
 	unsigned long address = (unsigned long)ptr;
 	unsigned long page_address = address & PAGE_MASK;
 
+	// Scan the slab pages if the page matches the pointer.
+	// TODO separate mutexes for large pages and page table entries?
 	pthread_mutex_lock(&malloc_lock);
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
 		for (struct small_pagelist *p = state->small_pages[i], *prev = p; p; prev = p, p = p->next) {
@@ -520,15 +707,21 @@ void free(void *ptr)
 				} else {
 #ifdef FILL_JUNK
 					// Immediately fill the freed memory with junk
-					DPRINTF("free fill junk %p +%u\n", ptr, 1 << (i + MIN_ALLOC_BITS));
+					// TODO make runtime configurable?
+					DPRINTF("fill junk %p +%u\n",
+						ptr, 1 << (i + MIN_ALLOC_BITS));
 					memset(ptr, FILL_JUNK, 1 << (i + MIN_ALLOC_BITS));
-#endif
+#endif // FILL_JUNK
 				}
 				goto found;
 			}
 		}
 	}
 
+	/*
+	  Not found in the small slabs, so let's try the large
+	  allocations next.
+	*/
 	DPRINTF("trying large list\n");
 
 	for (struct large_pagelist *p = state->large_pages, *prev = p; p; prev = p, p = p->next) {
@@ -549,19 +742,29 @@ void free(void *ptr)
 			goto found;
 		}
 	}
+	// Not found, maybe a bug in the calling program?
+	// TODO Optionally just ignore the error?
 	fprintf(stderr, "free: %p not found!\n", ptr);
 	abort();
  found:
+	// TODO more mutexes
 	pthread_mutex_unlock(&malloc_lock);
 	pagetables_dump("post free");
  finish:
 	errno = saved_errno;
 }
 
+/*
+  See manual page for calloc(). Locking is handled by malloc().
+*/
 void *calloc(size_t nmemb, size_t size)
 {
 	int saved_errno = errno;
 
+	/*
+	  Handle overflow in the multiplication by using 128 bit
+	  arithmetic.
+	*/
 	__uint128_t new_size = (__uint128_t)nmemb * (__uint128_t)size;
 	if (new_size > (__uint128_t)(1ULL << malloc_user_va_space_bits)) {
 		errno = ENOMEM;
@@ -575,6 +778,10 @@ void *calloc(size_t nmemb, size_t size)
 	return ptr;
 }
 
+/*
+  See manual page for calloc(). Locking is handled by
+  malloc_usable_size(), malloc() and free().
+*/
 void *realloc(void *ptr, size_t new_size)
 {
 	int saved_errno = errno;
@@ -588,6 +795,9 @@ void *realloc(void *ptr, size_t new_size)
 	}
 	size_t old_size = malloc_usable_size(ptr);
 	DPRINTF("realloc(%p, %lu) old_size %lu\n", ptr, new_size, old_size);
+	// TODO introduce an internal version of malloc() which does
+	// not touch memory. All of it will be copied or filled with
+	// junk.
 	void *ret = malloc(new_size);
 	if (!ret) {
 		errno = ENOMEM;
@@ -595,18 +805,24 @@ void *realloc(void *ptr, size_t new_size)
 	}
 	memcpy(ret, ptr, MIN(old_size, new_size));
 #ifdef FILL_JUNK
+	// TODO make runtime configurable?
 	// Fill new part of memory with junk
 	if (new_size > old_size) {
-		DPRINTF("fill junk %p +%lu\n", &((char *)ret)[old_size], new_size - old_size);
+		DPRINTF("fill junk %p +%lu\n",
+			&((char *)ret)[old_size], new_size - old_size);
 		memset(&((char *)ret)[old_size], FILL_JUNK, new_size - old_size);
 	}
-#endif
+#endif // FILL_JUNK
 	free(ptr);
 	DPRINTF("returning %p\n", ret);
 	errno = saved_errno;
 	return ret;
 }
 
+/*
+  Glibc extension. See manual page for reallocarray(). Locking is
+  handled by realloc().
+*/
 void *reallocarray(void *ptr, size_t nmemb, size_t size) {
 	__uint128_t new_size = (__uint128_t)nmemb * (__uint128_t)size;
 	if (new_size > (__uint128_t)(1ULL << malloc_user_va_space_bits)) {
@@ -616,6 +832,10 @@ void *reallocarray(void *ptr, size_t nmemb, size_t size) {
 	return realloc(ptr, (size_t)new_size);
 }
 
+/*
+  See manual page for posix_memalign(). Locking is
+  handled by aligned_malloc().
+*/
 int posix_memalign(void **memptr, size_t alignment, size_t size) {
 	int saved_errno = errno;
 
@@ -641,6 +861,10 @@ int posix_memalign(void **memptr, size_t alignment, size_t size) {
 	}
 }
 
+/*
+  Glibc extension. See manual page for aligned_alloc(). Locking is
+  handled by posix_memalign().
+*/
 void *aligned_alloc(size_t alignment, size_t size) {
 	DPRINTF("aligned_alloc(%lx, %lx)\n", alignment, size);
 	void *ret = NULL;
@@ -650,84 +874,123 @@ void *aligned_alloc(size_t alignment, size_t size) {
 	return ret;
 }
 
-#endif
+#endif // !LIBC
 
 #if DEBUG
 #ifndef ROUNDS1
+// Warning: will allocate 2^ROUNDS1 of memory
 #define ROUNDS1 10
-#endif
+#endif // ROUNDS1
 #ifndef ROUNDS2
 #define ROUNDS2 16
-#endif
+#endif // ROUNDS2
 #ifndef ROUNDS3
 #define ROUNDS3 129
-#endif
+#endif // ROUNDS3
 
 int main(void) {
 	for (int i = 0; i < ROUNDS1; i++) {
 		void *ptrv[ROUNDS2];
 		for (int j = 0; j < ROUNDS2; j++) {
 			ptrv[j] = malloc(1UL << i);
+			// Test that all memory is writable
 			memset(ptrv[j], 0, 1UL << i);
 		}
 #if DEBUG_2
 		for (int j = 0; j < ROUNDS2; j++) {
 			ptrv[j] = realloc(ptrv[j], (1UL << i) + 4096);
+			// Test that all memory is writable
 			memset(ptrv[j], 0, (1UL << i) + 4096);
 			ptrv[j] = realloc(ptrv[j], (1UL << i));
+			// Test that all memory is writable
 			memset(ptrv[j], 0, 1UL << i);
 		}
-#endif
+#endif // DEBUG_2
 		for (int j = 0; j < ROUNDS2; j++)
 			free(ptrv[j]);
 	}
 
+	/*
+	  Test a large enough number of largest of small allocations
+	  (2048) to check that new pages can be allocated (and freed
+	  later) for internal page table entries.
+	*/
 	void *ptrv[ROUNDS3];
 	for (int j = 0; j < ROUNDS3; j++) {
 		ptrv[j] = malloc(2048);
+		// Test that memory is writable
 		memset(ptrv[j], 0, 2048);
 	}
 	for (int j = 0; j < ROUNDS3; j++)
 		free(ptrv[j]);
 
+	// Test that errno is saved throughout the several next tests.
 	errno = EBADF;
+
+	// free(NULL) is OK
 	free(NULL);
 
+	/*
+	  The manual page says that malloc(0) may return NULL but
+	  sadly some applications expect it to return accessible
+	  memory and Glibc does that.
+	*/
 	void *ptr = malloc(0);
 	free(ptr);
 
 	ptr = malloc(1);
 	size_t usable_size = malloc_usable_size(ptr);
 	assert(usable_size >= 1);
+	/*
+	  Can't test all usable size because of buffer overflow
+	  detectors but we can test the initial size.
+	*/
 	memset(ptr, 0, 1);
 	ptr = realloc(ptr, 0); // Equal to free()
 	assert(ptr == NULL);
 
+	/*
+	  The manual page says that calloc(0) may return NULL but
+	  sadly some applications expect it to return accessible
+	  memory and Glibc does that.
+	*/
 	ptr = calloc(0, 0);
 	free(ptr);
 
 	ptr = calloc(4096, 1);
+	// Test that all memory is writable
 	memset(ptr, 0, 4096);
 	void *ptr2 = calloc(4096, 4);
+	// Test that all memory is writable
 	memset(ptr2, 0, 4096 * 4);
 	free(ptr);
 	free(ptr2);
+
+	/*
+	  Test that errno was saved throughout the several previous
+	  tests.
+	*/
 	assert(errno == EBADF);
 
 	ptr = malloc(1);
 	ptr = reallocarray(ptr, 2048, 1);
 	free(ptr);
 
+	// malloc_usable_size(NULL) should return 0
 	usable_size = malloc_usable_size(NULL);
 	assert(usable_size == 0);
 
 	errno = EBADF;
 	ptr = (void *)(unsigned long)1234;
+	// Error expected: bad alignment
 	int r = posix_memalign(&ptr, 3, 1);
+	// Neither errno nor the pointer should be touched
 	assert(errno == EBADF && r == EINVAL && ptr == (void *)(unsigned long)1234);
 
 	errno = EBADF;
+	// Error expected: bad alignment
 	r = posix_memalign(&ptr, 48, 1);
+	// Neither errno nor the pointer should be touched
 	assert(errno == EBADF && r == EINVAL && ptr == (void *)(unsigned long)1234);
 
 	errno = EBADF;
@@ -739,34 +1002,45 @@ int main(void) {
 	free(ptr);
 
 	errno = EBADF;
-	ptr = malloc((size_t)1024*1024*1024*1024*1024); // Test OOM
+	// Test OOM
+	ptr = malloc((size_t)1024*1024*1024*1024*1024);
 	assert(errno == ENOMEM);
 
 	errno = EBADF;
-	ptr = realloc(NULL, (size_t)1024*1024*1024*1024*1024); // Test OOM
+	// Test OOM
+	ptr = realloc(NULL, (size_t)1024*1024*1024*1024*1024);
 	assert(errno == ENOMEM);
 
 	errno = EBADF;
 	ptr = malloc(1);
-	ptr2 = realloc(ptr, (size_t)1024*1024*1024*1024*1024); // Test OOM
+	// Test OOM
+	ptr2 = realloc(ptr, (size_t)1024*1024*1024*1024*1024);
 	assert(errno == ENOMEM && ptr2 == NULL);
 
 	errno = EBADF;
 	ptr = malloc(1);
+	// Test multiplication overflow
 	ptr2 = reallocarray(ptr, INT_MAX, INT_MAX);
 	assert(errno == ENOMEM && ptr2 == NULL);
 
 	errno = EBADF;
+	// Test multiplication overflow
 	ptr = calloc(INT_MAX, INT_MAX);
 	assert(errno == ENOMEM);
 
 	ptr = (void *)(unsigned long)1234;
-	r = posix_memalign(&ptr, 8192, (size_t)1024*1024*1024*1024*1024); // Test OOM
+	// Test OOM
+	r = posix_memalign(&ptr, 8192, (size_t)1024*1024*1024*1024*1024);
+	/*
+	  The manual page claims that errno would not be set, but
+	  actually Glibc does that.
+	*/
 	assert(r == ENOMEM && ptr == (void *)(unsigned long)1234);
 
 	errno = EBADF;
-	ptr = aligned_alloc(8192, (size_t)1024*1024*1024*1024*1024); // Test OOM
+	// Test OOM
+	ptr = aligned_alloc(8192, (size_t)1024*1024*1024*1024*1024);
 	assert(r == ENOMEM);
 	return 0;
 }
-#endif
+#endif // DEBUG
