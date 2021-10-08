@@ -5,6 +5,7 @@ extraction:
   cpp:
     after_prepare:
       - pip3 install meson==0.53.2
+      - export PATH="/opt/work/.local/bin:$PATH"
     configure:
       command:
         - meson setup builddir/
