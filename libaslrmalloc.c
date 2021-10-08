@@ -111,6 +111,7 @@ struct small_pagelist {
 	struct small_pagelist *next;
 	void *page;
 	unsigned long bitmap[BITMAP_ULONGS];
+	unsigned long access_randomizer_state;
 };
 
 /*
@@ -139,6 +140,17 @@ static unsigned long malloc_random_address_mask;
 static int malloc_getrandom_bytes;
 static int malloc_user_va_space_bits;
 
+/*
+  Get needed random bytes, never giving up.
+*/
+static void get_random(void *data, size_t bytes) {
+	for (;;) {
+		ssize_t r = getrandom(data, bytes, GRND_RANDOM);
+		if (r == bytes)
+			return;
+	}
+}
+
 // TODO: possibly use MAP_HUGETLB | MAP_HUGE_2MB in case the alignment
 // is already that high
 /*
@@ -149,9 +161,8 @@ static int malloc_user_va_space_bits;
 static void *mmap_random(size_t size, unsigned long extra_mask) {
 	for (;;) {
 		unsigned long addr;
-		ssize_t r = getrandom(&addr, malloc_getrandom_bytes, GRND_RANDOM);
-		if (r < malloc_getrandom_bytes)
-			continue;
+		get_random(&addr, malloc_getrandom_bytes);
+
 		addr <<= PAGE_BITS;
 		addr &= malloc_random_address_mask & extra_mask;
 		void *ret = mmap((void *)addr, size, PROT_READ | PROT_WRITE,
@@ -220,37 +231,53 @@ static void bitmap_clear(unsigned long *bitmap, unsigned int bit) {
 	bitmap[bit >> ULONG_BITS] &= ~(1UL << (bit & ~ULONG_MASK));
 }
 
-// TODO free item could be found in random order instead of first
-// clear LSB
+// TODO Use cryptographically secure, but perfect (no collisions) hash
+// or randomization function
+// https://en.wikipedia.org/wiki/Cryptographically-secure_pseudorandom_number_generator
+// https://en.wikipedia.org/wiki/Perfect_hash_function
+// https://en.wikipedia.org/wiki/Randomization_function
 /*
-  Find first clear (free slab) bit in the bitmap. Not all words in the
+  Scramble bitmap index. Given an index, maximum index number and
+  state, the function computes a pseudorandomized index. The goal is
+  that, given an address of an allocated memory block, it's impossible
+  to determine addresses of previous or future allocations in the same
+  slab page without knowing the secret (which is not in the same
+  page). This is also helped by having a separate state for each slab
+  page. Of course the number of entries in a page is always very
+  small.
+*/
+static unsigned int scramble_index(unsigned int index, unsigned int max,
+				   unsigned long access_randomizer_state) {
+	assert(max > 0);
+	unsigned int ret = (index + access_randomizer_state) % max;
+	DPRINTF("scrambled %u -> %u (max %u state %lx)\n", index, ret, max, access_randomizer_state);
+	return ret;
+}
+
+/*
+  Find a clear (free slab) bit in the bitmap. Not all words in the
   bitmap are used in full.
 */
-static int bitmap_find_first_clear(const unsigned long *bitmap, unsigned int bitmap_bits) {
+static int bitmap_find_clear(const unsigned long *bitmap, unsigned int bitmap_bits,
+				   unsigned long access_randomizer_state) {
 	DPRINTF("bitmap_bits %u (%u words)\n", bitmap_bits, bitmap_bits >> ULONG_BITS);
 
-	for (unsigned int b = 0; b < bitmap_bits; b += 1 << ULONG_BITS) {
-		unsigned int i = b >> ULONG_BITS;
+	for (unsigned int bit = 0; bit < bitmap_bits; bit++) {
+		unsigned int scrambled_bit = scramble_index(bit, bitmap_bits, access_randomizer_state);
+
+		unsigned int word_index = scrambled_bit >> ULONG_BITS;
+		unsigned int bit_index = scrambled_bit & ~ULONG_MASK;
 		unsigned long mask = (unsigned long)-1;
+		if (bitmap_bits - (scrambled_bit & ULONG_MASK) < ULONG_SIZE)
+			mask = (1UL << (bitmap_bits - (scrambled_bit & ULONG_MASK))) - 1;
+		unsigned long word = bitmap[word_index] & mask;
 
-		if (bitmap_bits - b < ULONG_SIZE)
-			mask = (1UL << (bitmap_bits - b)) - 1;
-		unsigned long word = bitmap[i] & mask;
-
-		DPRINTF("checking index %u word %lx mask %lx bits left %d\n",
-			i, word, mask, bitmap_bits - b);
-		if (word == 0) {
-			DPRINTF("returning %u\n", b);
-			return b;
+		DPRINTF("checking index %u+%u word %lx mask %lx bit %d (original %d) bits left %d\n",
+			word_index, bit_index, word, mask, scrambled_bit, bit, bitmap_bits - scrambled_bit);
+		if ((word & (1UL << bit_index)) == 0) {
+			DPRINTF("returning %d\n", scrambled_bit);
+			return scrambled_bit;
 		}
-		if (word == ((unsigned long)-1 & mask))
-			continue;
-
-		int ret = b + __builtin_ctzl(~word);
-		if (ret >= bitmap_bits)
-			ret = -1;
-		DPRINTF("counting bits returning %d\n", ret);
-		return ret;
 	}
 	DPRINTF("returning -1\n");
 	return -1;
@@ -304,8 +331,8 @@ static void pagetables_dump(const char *label) {
 	struct small_pagelist *p;
 	count = 0;
 	for (p = state->pagetables, count = 0; p; p = p->next, count++) {
-		DPRINTF("%s: pagetables (%p) [%u] .page=%p bm=",
-			label, p, count, p->page);
+		DPRINTF("%s: pagetables (%p) [%u] .page=%p rnd=%lx bm=",
+			label, p, count, p->page, p->access_randomizer_state);
 		for (int i = 0; i < BITMAP_ULONGS; i++)
 			DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
 		DPRINTF_NOPREFIX("\n");
@@ -314,8 +341,8 @@ static void pagetables_dump(const char *label) {
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
 		count = 0;
 		for (p = state->small_pages[i]; p; p = p->next, count++) {
-			DPRINTF("%s: small_pages[%u] (%p) [%u] .page=%p bm=",
-				label, i, p, count, p->page);
+			DPRINTF("%s: small_pages[%u] (%p) [%u] .page=%p .rnd=%lx bm=",
+				label, i, p, count, p->page, p->access_randomizer_state);
 			for (int i = 0; i < BITMAP_ULONGS; i++)
 				DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
 			DPRINTF_NOPREFIX("\n");
@@ -339,7 +366,8 @@ static struct small_pagelist *pagetable_new(void) {
 	unsigned int index = get_index(sizeof(*ret));
 	for (;;) {
 		for (struct small_pagelist *p = state->pagetables; p; p = p->next) {
-			int offset = bitmap_find_first_clear(p->bitmap, bitmap_bits(sizeof(*ret)));
+			int offset = bitmap_find_clear(p->bitmap, bitmap_bits(sizeof(*ret)),
+						       p->access_randomizer_state);
 
 			if (offset >= 0) {
 				ret = ptr_to_offset_in_page(p->page, index, offset);
@@ -362,8 +390,9 @@ static struct small_pagelist *pagetable_new(void) {
 		struct small_pagelist *new = ptr_to_offset_in_page(page, index, offset);
 		new->page = page;
 		bitmap_set(new->bitmap, offset);
+		get_random(&new->access_randomizer_state, sizeof(new->access_randomizer_state));
 		new->next = state->pagetables;
-		DPRINTF("new pagetable %p page %p\n", new, new->page);
+		DPRINTF("new pagetable %p page %p rnd %lx\n", new, new->page, new->access_randomizer_state);
 		// New page is inserted at head of list, retry.
 		state->pagetables = new;
 	}
@@ -491,6 +520,8 @@ static __attribute__((constructor)) void init(void) {
 	bitmap_set(&temp_bitmap, offset);
 	state->pagetables = ptr_to_offset_in_page(pagetables, pages_index, offset);
 	state->pagetables->page = pagetables;
+	get_random(&state->pagetables->access_randomizer_state,
+		   sizeof(state->pagetables->access_randomizer_state));
 	// Copy temporary bitmap
 	state->pagetables->bitmap[0] = temp_bitmap;
 	pagetables_dump("initial");
@@ -551,7 +582,8 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 		for (;;) {
 			// Try to find a free entry in the free slabs
 			for (struct small_pagelist *p = state->small_pages[index]; p; p = p->next) {
-				int offset = bitmap_find_first_clear(p->bitmap, bitmap_bits(size));
+				int offset = bitmap_find_clear(p->bitmap, bitmap_bits(size),
+							       p->access_randomizer_state);
 
 				if (offset >= 0) {
 					DPRINTF("found offset %d ptr %p\n", offset, p->page);
@@ -579,8 +611,10 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 			*/
 			memset(new->bitmap, 0, sizeof(new->bitmap));
 			new->next = state->small_pages[index];
-			DPRINTF("new small pagetable at index %u %p .page=%p\n",
-				index, new, new->page);
+			get_random(&new->access_randomizer_state,
+				   sizeof(new->access_randomizer_state));
+			DPRINTF("new small pagetable at index %u %p .page=%p .rnd=%lx\n",
+				index, new, new->page, new->access_randomizer_state);
 			state->small_pages[index] = new;
 			pagetables_dump("post adding new page table");
 		}
