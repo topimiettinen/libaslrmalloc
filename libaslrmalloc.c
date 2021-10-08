@@ -1040,7 +1040,7 @@ int main(void) {
 	errno = EBADF;
 	// Test OOM
 	ptr = aligned_alloc(8192, (size_t)1024*1024*1024*1024*1024);
-	assert(r == ENOMEM);
+	assert(errno == ENOMEM);
 	return 0;
 }
 #endif // DEBUG
