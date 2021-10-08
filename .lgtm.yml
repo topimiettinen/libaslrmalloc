@@ -4,14 +4,14 @@ path_classifiers:
 extraction:
   cpp:
     after_prepare:
-      - pip3 install meson==0.53.2
+      - pip3 install meson==0.59.2
       - export PATH="/opt/work/.local/bin:$PATH"
     configure:
       command:
-        - meson setup builddir/
+        - /opt/work/.local/bin/meson setup builddir/
     index:
       build_command:
-        - meson compile -C builddir/
+        - /opt/work/.local/bin/meson compile -C builddir/
   python:
     python_setup:
       version: 3
