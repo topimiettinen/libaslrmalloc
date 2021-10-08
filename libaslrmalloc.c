@@ -630,6 +630,8 @@ size_t malloc_usable_size(void *ptr) {
 	pagetables_dump("malloc_usable_size");
 
 	// Scan the slab pages if the page matches the pointer.
+	// TODO separate mutexes for large pages and page table entries?
+	pthread_mutex_lock(&malloc_lock);
 	unsigned long address = (unsigned long)ptr & PAGE_MASK;
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
 		for (struct small_pagelist *p = state->small_pages[i]; p; p = p->next) {
@@ -660,6 +662,8 @@ size_t malloc_usable_size(void *ptr) {
 	fprintf(stderr, "malloc_usable_size: %p not found!\n", ptr);
 	abort();
  finish:
+	// TODO more mutexes
+	pthread_mutex_unlock(&malloc_lock);
 	DPRINTF("returning %lx\n", ret);
 	errno = saved_errno;
 	return ret;
