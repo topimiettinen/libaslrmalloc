@@ -3,12 +3,14 @@ path_classifiers:
     - "*.c"
 extraction:
   cpp:
-    prepare:
-      packages:
-        - meson
+    after_prepare:
+      - pip3 install meson==0.53.2
     configure:
       command:
         - meson setup builddir/
     index:
       build_command:
         - meson compile -C builddir/
+  python:
+    python_setup:
+      version: 3
