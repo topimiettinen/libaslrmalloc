@@ -105,8 +105,9 @@ Debugging could be more robust in multithread environment and early library star
 
 In case a huge alignment (bad for ASLR) is requested, hugepages could be used for `posix_memalign()` and `aligned_alloc()`.
 
-Guard pages (`mprotect(,, PROT_NONE)`) could be used before and after the allocated pages, to prevent other mappings getting too near.
-Maybe the guard pages could be even larger than one page, for example fill the entire 2MB page table entry.
+Guard pages (`mprotect(,, PROT_NONE)`) are used before and after the allocated pages, to prevent other mappings getting too near.
+Maybe the guard pages could be even larger than one page, for example fill the entire 2MB page table entry, especially for large allocations.
+If they hold a small number of large items (as opposed to large number of small items), a small guard may not be enough.
 That should only affect kernel's internal VMA structures, not CPU page tables.
 
 On Intel CPUs, `pkey_mprotect()` could be used to protect internal structures with [pkeys](https://man7.org/linux/man-pages/man7/pkeys.7.html) (weakly).

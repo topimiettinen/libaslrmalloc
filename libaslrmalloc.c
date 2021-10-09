@@ -143,6 +143,14 @@ static unsigned long malloc_random_address_mask;
 static int malloc_getrandom_bytes;
 static int malloc_user_va_space_bits;
 
+// TODO Maybe the guard pages could be even larger than one page, for
+// example fill the entire 2MB page table entry, especially for large
+// allocations. If they hold a small number of large items (as opposed
+// to large number of small items), a small guard may not be enough.
+static unsigned long get_guard_size(size_t size) {
+	return PAGE_SIZE;
+}
+
 /*
   Get needed random bytes, never giving up.
 */
@@ -163,18 +171,20 @@ static void get_random(void *data, size_t bytes) {
 */
 static void *mmap_random(size_t size, unsigned long extra_mask) {
 	unsigned long stack = (unsigned long) __builtin_frame_address(0);
+	unsigned long guard_size = get_guard_size(size);
 	for (;;) {
 		unsigned long addr;
 		get_random(&addr, malloc_getrandom_bytes);
 
 		addr <<= PAGE_BITS;
 		addr &= malloc_random_address_mask & extra_mask;
+		addr -= guard_size;
 
 		// Don't get too close to the stack
 		if (addr >= stack - STACK_ZONE && addr <= stack + STACK_ZONE)
 			continue;
 
-		void *ret = mmap((void *)addr, size, PROT_READ | PROT_WRITE,
+		void *ret = mmap((void *)addr, size + 2 * guard_size, PROT_READ | PROT_WRITE,
 				 MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_PRIVATE,
 				 -1, 0);
 		if (ret == MAP_FAILED) {
@@ -183,7 +193,24 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 			else
 				DPRINTF("mmap: %m");
 		}
-		DPRINTF("returning %p\n", ret);
+
+		unsigned long lower_guard = (unsigned long)ret;
+		int r = mprotect((void *)lower_guard, guard_size, PROT_NONE);
+		if (r < 0) {
+			perror("mprotect lower guard");
+			abort();
+		}
+
+		unsigned long higher_guard = (unsigned long)ret + guard_size + size;
+		r = mprotect((void *)higher_guard, guard_size, PROT_NONE);
+		if (r < 0) {
+			perror("mprotect higher guard");
+			abort();
+		}
+
+		ret = (void *)((unsigned long)ret + guard_size);
+		DPRINTF("returning %p, guard pages at %p+%lu, %p+%lu\n",
+			ret, lower_guard, guard_size, higher_guard, guard_size);
 		return ret;
 	}
 }
@@ -432,14 +459,16 @@ static void pagetable_free(struct small_pagelist *entry) {
 			  (entry used for managing the page itself)
 			*/
 			if (bitmap_is_empty(p->bitmap, last_index(sizeof(struct small_pagelist)))) {
-				DPRINTF("unmap pagetable %p\n", p->page);
+				unsigned long guard_size = get_guard_size(PAGE_SIZE);
+				DPRINTF("unmap pagetable %p (guards %lu)\n", p->page, guard_size);
 				/*
 				  Because the page contains the entry
 				  for managing itself, grab next entry
 				  pointer before the page is unmapped.
 				*/
 				struct small_pagelist *next = p->next;
-				int r = munmap(p->page, PAGE_SIZE);
+				int r = munmap((void *)((unsigned long)p->page - guard_size),
+					       PAGE_SIZE + 2 * guard_size);
 				if (r < 0) {
 					perror("munmap");
 					abort();
@@ -739,9 +768,11 @@ void free(void *ptr) {
 				unsigned int bits = bitmap_bits(1 << (i + MIN_ALLOC_BITS));
 				bitmap_clear(p->bitmap, (address & ~PAGE_MASK) >> (i + MIN_ALLOC_BITS));
 				if (bitmap_is_empty(p->bitmap, bits)) {
+					unsigned long guard_size = get_guard_size(PAGE_SIZE);
 					// Immediately unmap pages
-					DPRINTF("unmap small %p\n", p->page);
-					int r = munmap(p->page, PAGE_SIZE);
+					DPRINTF("unmap small %p (guards %lu)\n", p->page, guard_size);
+					int r = munmap((void *)((unsigned long)p->page - guard_size),
+						       PAGE_SIZE + 2 * guard_size);
 					if (r < 0) {
 						perror("munmap");
 						abort();
@@ -775,8 +806,10 @@ void free(void *ptr) {
 		DPRINTF(".page=%p .size=%lx\n", p->page, p->size);
 		if (((unsigned long)p->page & PAGE_MASK) == address) {
 			// Immediately unmap all freed memory
-			DPRINTF("unmap large %p +%lu\n", p->page, p->size);
-			int r = munmap(p->page, p->size);
+			unsigned long guard_size = get_guard_size(p->size);
+			DPRINTF("unmap large %p +%lu + guard %lu\n", p->page, p->size, guard_size);
+			int r = munmap((void *)((unsigned long)p->page - guard_size),
+				       p->size + 2 * guard_size);
 			if (r < 0) {
 				perror("munmap");
 				abort();
