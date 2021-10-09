@@ -92,6 +92,9 @@
 
 #define BITS_PER_BYTE 8
 
+// Avoid addresses within ±32MB of stack
+#define STACK_ZONE (32 * 1024 * 1024)
+
 #define MIN_ALLOC_BITS 4
 #define MIN_ALLOC_SIZE (1 << MIN_ALLOC_BITS)
 
@@ -159,12 +162,18 @@ static void get_random(void *data, size_t bytes) {
   that happens (errno == EEXIST), retry,
 */
 static void *mmap_random(size_t size, unsigned long extra_mask) {
+	unsigned long stack = (unsigned long) __builtin_frame_address(0);
 	for (;;) {
 		unsigned long addr;
 		get_random(&addr, malloc_getrandom_bytes);
 
 		addr <<= PAGE_BITS;
 		addr &= malloc_random_address_mask & extra_mask;
+
+		// Don't get too close to the stack
+		if (addr >= stack - STACK_ZONE && addr <= stack + STACK_ZONE)
+			continue;
+
 		void *ret = mmap((void *)addr, size, PROT_READ | PROT_WRITE,
 				 MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_PRIVATE,
 				 -1, 0);
