@@ -76,6 +76,13 @@
 #include <sys/random.h>
 #include <unistd.h>
 
+#ifndef MAP_HUGE_2MB
+#define MAP_HUGE_2MB (21 << MAP_HUGE_SHIFT)
+#endif
+
+#define HUGE_2MB_SIZE (2 * 1024 * 1024)
+#define HUGE_2MB_MASK (~(HUGE_2MB_SIZE - 1))
+
 #if !LIBC
 // TODO assumes page size of 4096
 #define PAGE_BITS 12
@@ -181,6 +188,12 @@ static unsigned int randomize_int(unsigned int start, unsigned int end) {
 static void *mmap_random(size_t size, unsigned long extra_mask) {
 	unsigned long stack = (unsigned long) __builtin_frame_address(0);
 	unsigned long guard_size = get_guard_size(size);
+
+	int flags = MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_PRIVATE;
+	bool use_hugepages = false;
+	if (size == HUGE_2MB_SIZE && (extra_mask & HUGE_2MB_MASK) == extra_mask)
+		use_hugepages = true;
+
 	for (;;) {
 		unsigned long addr;
 		get_random(&addr, malloc_getrandom_bytes);
@@ -193,31 +206,65 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 		if (addr >= stack - STACK_ZONE && addr <= stack + STACK_ZONE)
 			continue;
 
-		void *ret = mmap((void *)addr, size + 2 * guard_size, PROT_READ | PROT_WRITE,
-				 MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_PRIVATE,
-				 -1, 0);
-		if (ret == MAP_FAILED) {
-			if (errno == EEXIST || errno == EINVAL)
+		void *ret;
+		unsigned long lower_guard, higher_guard;
+
+		if (use_hugepages) {
+			ret = mmap((void *)addr + guard_size, size, PROT_READ | PROT_WRITE,
+				   flags | MAP_HUGETLB | MAP_HUGE_2MB, -1, 0);
+			if (ret == MAP_FAILED && errno == ENOMEM) {
+				// Retry without hugepages
+				use_hugepages = false;
 				continue;
-			else
-				DPRINTF("mmap: %m");
-		}
+			}
+			if (ret == MAP_FAILED) {
+				if (errno == EEXIST || errno == EINVAL)
+					continue;
+				else
+					DPRINTF("mmap: %m");
+			}
 
-		unsigned long lower_guard = (unsigned long)ret;
-		int r = mprotect((void *)lower_guard, guard_size, PROT_NONE);
-		if (r < 0) {
-			perror("mprotect lower guard");
-			abort();
-		}
+			lower_guard = (unsigned long)ret - guard_size;
+			void *r = mmap((void *)lower_guard, guard_size, PROT_NONE,
+				       flags, -1, 0);
+			if (r == MAP_FAILED) {
+				perror("mmap lower guard");
+				abort();
+			}
 
-		unsigned long higher_guard = (unsigned long)ret + guard_size + size;
-		r = mprotect((void *)higher_guard, guard_size, PROT_NONE);
-		if (r < 0) {
-			perror("mprotect higher guard");
-			abort();
-		}
+			higher_guard = (unsigned long)ret + size;
+			r = mmap((void *)higher_guard, guard_size, PROT_NONE,
+				 flags, -1, 0);
+			if (r == MAP_FAILED) {
+				perror("mmap higher guard");
+				abort();
+			}
+		} else  {
+			ret = mmap((void *)addr, size + 2 * guard_size, PROT_READ | PROT_WRITE,
+				   flags, -1, 0);
+			if (ret == MAP_FAILED) {
+				if (errno == EEXIST || errno == EINVAL)
+					continue;
+				else
+					DPRINTF("mmap: %m");
+			}
 
-		ret = (void *)((unsigned long)ret + guard_size);
+			lower_guard = (unsigned long)ret;
+			int r = mprotect((void *)lower_guard, guard_size, PROT_NONE);
+			if (r < 0) {
+				perror("mprotect lower guard");
+				abort();
+			}
+
+			higher_guard = (unsigned long)ret + guard_size + size;
+			r = mprotect((void *)higher_guard, guard_size, PROT_NONE);
+			if (r < 0) {
+				perror("mprotect higher guard");
+				abort();
+			}
+
+			ret = (void *)((unsigned long)ret + guard_size);
+		}
 		DPRINTF("returning %p, guard pages at %p+%lu, %p+%lu\n",
 			ret, lower_guard, guard_size, higher_guard, guard_size);
 		return ret;
@@ -1088,6 +1135,12 @@ int main(void) {
 
 	errno = EBADF;
 	r = posix_memalign(&ptr, 8192, 1);
+	assert(errno == EBADF && r == 0);
+	free(ptr);
+
+	// Test automatic huge pages, may return non-hugetlb pages
+	errno = EBADF;
+	r = posix_memalign(&ptr, HUGE_2MB_SIZE, HUGE_2MB_SIZE);
 	assert(errno == EBADF && r == 0);
 	free(ptr);
 
