@@ -162,6 +162,15 @@ static void get_random(void *data, size_t bytes) {
 	}
 }
 
+/*
+  Randomize within [start ... end], inclusive.
+*/
+static unsigned int randomize_int(unsigned int start, unsigned int end) {
+	unsigned int randomizer;
+	get_random(&randomizer, sizeof(randomizer));
+	return start + randomizer % (end - start + 1);
+}
+
 // TODO: possibly use MAP_HUGETLB | MAP_HUGE_2MB in case the alignment
 // is already that high
 /*
@@ -542,21 +551,25 @@ static __attribute__((constructor)) void init(void) {
 	if (pagetables == MAP_FAILED)
 		abort();
 
-	// Mark slab allocation for global state in the bitmap.
+	/*
+	  Select random slabs for the state. Exclude last index, used
+	  below for internal use.
+	*/
 	int pages_index = get_index(sizeof(struct small_pagelist));
-	// TODO offset could be randomized instead of 0
-	int offset = 0;
+	unsigned int last_offset = last_index(sizeof(struct small_pagelist));
+	unsigned int num_slabs = align_up_size(sizeof(*state)) / align_up_size(sizeof(struct small_pagelist));
+	unsigned int offset = randomize_int(0, last_offset - 1 - num_slabs);
 	state = ptr_to_offset_in_page(pagetables, pages_index, offset);
-	for (unsigned int i = offset;
-	     i < offset + align_up_size(sizeof(*state)) / align_up_size(sizeof(struct small_pagelist));
-	     i++)
+	DPRINTF("main state at %p +%zu\n", state, sizeof(*state));
+
+	// Mark slab allocation for global state in the bitmap.
+	for (unsigned int i = offset; i < offset + num_slabs; i++)
 		bitmap_set(&temp_bitmap, i);
 
 	// Mark allocation for initial internal page tables in the bitmap.
 	// TODO offset could be randomized instead of last index
-	offset = last_index(sizeof(struct small_pagelist));
-	bitmap_set(&temp_bitmap, offset);
-	state->pagetables = ptr_to_offset_in_page(pagetables, pages_index, offset);
+	bitmap_set(&temp_bitmap, last_offset);
+	state->pagetables = ptr_to_offset_in_page(pagetables, pages_index, last_offset);
 	state->pagetables->page = pagetables;
 	get_random(&state->pagetables->access_randomizer_state,
 		   sizeof(state->pagetables->access_randomizer_state));
