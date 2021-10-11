@@ -51,6 +51,7 @@
 #include <sys/mman.h>
 #include <sys/param.h>
 #include <sys/random.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #if !LIBC
@@ -185,7 +186,10 @@ static unsigned int randomize_int(unsigned int start, unsigned int end) {
   MAP_FIXED_NOREPLACE is used to avoid already existing mappings. If
   that happens (errno == EEXIST), retry,
 */
-static void *mmap_random(size_t size, unsigned long extra_mask) {
+static void *mmap_random_flags(size_t size, unsigned long extra_mask, int prot,
+			       int flags, int fd, off_t offset, bool guards) {
+	DPRINTF("size %zu, extra_mask %lu, prot %d, flags %d, fd %d, offset %lu, guards %d",
+		size, extra_mask, prot, flags, fd, offset, guards);
 	unsigned long stack = (unsigned long) __builtin_frame_address(0);
 	unsigned long guard_size = get_guard_size(size);
 	for (;;) {
@@ -194,15 +198,20 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 
 		addr <<= PAGE_BITS;
 		addr &= malloc_random_address_mask & extra_mask;
-		addr -= guard_size;
+
+		if (guards)
+			addr -= guard_size;
 
 		// Don't get too close to the stack
 		if (addr >= stack - STACK_ZONE && addr <= stack + STACK_ZONE)
 			continue;
 
-		void *ret = mmap((void *)addr, size + 2 * guard_size, PROT_READ | PROT_WRITE,
-				 MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_PRIVATE,
-				 -1, 0);
+		unsigned long full_size = size;
+		if (guards)
+			full_size += 2 * guard_size;
+
+		void *ret = (void *)syscall(SYS_mmap, (void *)addr, full_size, prot, flags, -1, 0);
+		//void *ret = mmap((void *)addr, full_size, prot, flags, -1, 0);
 		if (ret == MAP_FAILED) {
 			if (errno == EEXIST || errno == EINVAL)
 				continue;
@@ -210,25 +219,33 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 				DPRINTF("mmap: %m");
 		}
 
-		unsigned long lower_guard = (unsigned long)ret;
-		int r = mprotect((void *)lower_guard, guard_size, PROT_NONE);
-		if (r < 0) {
-			perror("mprotect lower guard");
-			abort();
-		}
+		if (guards) {
+			unsigned long lower_guard = (unsigned long)ret;
+			int r = mprotect((void *)lower_guard, guard_size, PROT_NONE);
+			if (r < 0) {
+				perror("mprotect lower guard");
+				abort();
+			}
 
-		unsigned long higher_guard = (unsigned long)ret + guard_size + size;
-		r = mprotect((void *)higher_guard, guard_size, PROT_NONE);
-		if (r < 0) {
-			perror("mprotect higher guard");
-			abort();
-		}
-
-		ret = (void *)((unsigned long)ret + guard_size);
-		DPRINTF("returning %p, guard pages at %lx+%lu, %lx+%lu\n",
-			ret, lower_guard, guard_size, higher_guard, guard_size);
+			unsigned long higher_guard = (unsigned long)ret + guard_size + size;
+			r = mprotect((void *)higher_guard, guard_size, PROT_NONE);
+			if (r < 0) {
+				perror("mprotect higher guard");
+				abort();
+			}
+			ret = (void *)((unsigned long)ret + guard_size);
+			DPRINTF("returning %p, guard pages at %lx+%lu, %lx+%lu\n",
+				ret, lower_guard, guard_size, higher_guard, guard_size);
+		} else
+			DPRINTF("returning %p, no guard pages\n", ret);
 		return ret;
 	}
+}
+
+static void *mmap_random(size_t size, unsigned long extra_mask) {
+	return mmap_random_flags(size, extra_mask, PROT_READ | PROT_WRITE,
+				 MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_PRIVATE,
+				 -1, 0, true);
 }
 
 /*
@@ -537,6 +554,9 @@ static __attribute__((constructor)) void init(void) {
 
 	// Also calculate number of random bytes needed for each address
 	malloc_getrandom_bytes = (malloc_user_va_space_bits - PAGE_BITS + 7) / 8;
+	if (secure_getenv("LIBASLRMALLOC_DEBUG"))
+		malloc_debug = true;
+
 	DPRINTF("%d VA space bits, mask %16.16lx, getrandom() bytes %d\n",
 		malloc_user_va_space_bits, malloc_random_address_mask,
 		malloc_getrandom_bytes);
@@ -584,9 +604,6 @@ static __attribute__((constructor)) void init(void) {
 	// Copy temporary bitmap
 	state->pagetables->bitmap[0] = temp_bitmap;
 	pagetables_dump("initial");
-
-	if (secure_getenv("LIBASLRMALLOC_DEBUG"))
-		malloc_debug = true;
 
 	char *junk = secure_getenv("LIBASLRMALLOC_FILL_JUNK");
 	if (junk)
@@ -1034,6 +1051,18 @@ void *valloc(size_t size) {
 */
 void *pvalloc(size_t size) {
 	return aligned_alloc(PAGE_SIZE, size);
+}
+
+void *mmap64(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
+	abort();
+	if (!state)
+		init();
+
+	// Caller doesn't care about the address, so we can randomize it
+	if (!addr)
+		return mmap_random_flags(length, -1, prot, flags, fd, offset, false);
+
+	return (void *)syscall(SYS_mmap, addr, length, prot, flags, fd, offset);
 }
 
 #endif // !LIBC
