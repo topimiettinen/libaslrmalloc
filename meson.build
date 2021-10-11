@@ -25,14 +25,21 @@ test_1 = executable('test_1',
   'libaslrmalloc.c',
   c_args: ['-DDEBUG'],
 )
-test('test_1', test_1)
+test('test_1', test_1, env: [
+  'LIBASLRMALLOC_DEBUG=1',
+  'LIBASLRMALLOC_FILL_JUNK=X',
+  'LIBASLRMALLOC_STRICT_MALLOC0=1',
+  'LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO=1',
+  'LIBASLRMALLOC_STATS=1',
+  ]
+)
 
 # Warning: test allocates 2^ROUNDS1 memory
 test_2 = executable('test_2',
   'libaslrmalloc.c',
   c_args: ['-DDEBUG', '-DDEBUG_2', '-DROUNDS1=10', '-DROUNDS2=16'],
 )
-test('test_2', test_2)
+test('test_2', test_2, env: ['LIBASLRMALLOC_FILL_JUNK='])
 
 cat = find_program('cat')
 preload = environment({'LD_PRELOAD': libaslrmalloc.full_path()})
