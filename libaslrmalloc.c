@@ -19,8 +19,7 @@
     LD_PRELOAD=/path/to/libaslrmalloc.so program
 */
 
-// Fill character for free()d memory, comment out to disable
-// TODO make runtime configurable (secure_getenv())?
+// Fill character for free()d memory
 #define FILL_JUNK 'Z'
 
 #if !LIBC
@@ -122,6 +121,7 @@ static int malloc_user_va_space_bits;
 
 // Runtime options
 static bool malloc_debug;
+static char malloc_fill_junk = FILL_JUNK;
 
 #define DPRINTF(format, ...) do {					\
 		if (malloc_debug) {					\
@@ -582,6 +582,12 @@ static __attribute__((constructor)) void init(void) {
 	if (secure_getenv("LIBASLRMALLOC_DEBUG"))
 		malloc_debug = true;
 
+	char *junk = secure_getenv("LIBASLRMALLOC_FILL_JUNK");
+	if (junk)
+		malloc_fill_junk = *junk;
+	else
+		malloc_fill_junk = '\0';
+
 }
 
 static __attribute__((destructor)) void fini(void) {
@@ -698,12 +704,12 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
  found:
 	// TODO more mutexes
 	pthread_mutex_unlock(&malloc_lock);
-#ifdef FILL_JUNK
+
 	// Fill memory with junk
-	// TODO make runtime configurable?
-	DPRINTF("fill junk %p +%lu\n", ret, real_size);
-	memset(ret, FILL_JUNK, real_size);
-#endif // FILL_JUNK
+	if (malloc_fill_junk != '\0') {
+		DPRINTF("fill junk %p +%lu\n", ret, real_size);
+		memset(ret, malloc_fill_junk, real_size);
+	}
 	pagetables_dump("post malloc");
  finish:
 	DPRINTF("returning %p\n", ret);
@@ -820,14 +826,11 @@ void free(void *ptr) {
 					else
 						prev->next = p->next;
 					pagetable_free(p);
-				} else {
-#ifdef FILL_JUNK
+				} else if (malloc_fill_junk != '\0') {
 					// Immediately fill the freed memory with junk
-					// TODO make runtime configurable?
 					DPRINTF("fill junk %p +%u\n",
 						ptr, 1 << (i + MIN_ALLOC_BITS));
-					memset(ptr, FILL_JUNK, 1 << (i + MIN_ALLOC_BITS));
-#endif // FILL_JUNK
+					memset(ptr, malloc_fill_junk, 1 << (i + MIN_ALLOC_BITS));
 				}
 				goto found;
 			}
@@ -922,15 +925,13 @@ void *realloc(void *ptr, size_t new_size)
 		return NULL;
 	}
 	memcpy(ret, ptr, MIN(old_size, new_size));
-#ifdef FILL_JUNK
-	// TODO make runtime configurable?
-	// Fill new part of memory with junk
-	if (new_size > old_size) {
+
+	if (new_size > old_size && malloc_fill_junk != '\0') {
+		// Fill new part of memory with junk
 		DPRINTF("fill junk %p +%lu\n",
 			&((char *)ret)[old_size], new_size - old_size);
-		memset(&((char *)ret)[old_size], FILL_JUNK, new_size - old_size);
+		memset(&((char *)ret)[old_size], malloc_fill_junk, new_size - old_size);
 	}
-#endif // FILL_JUNK
 	free(ptr);
 	DPRINTF("returning %p\n", ret);
 	errno = saved_errno;
