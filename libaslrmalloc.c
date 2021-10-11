@@ -23,10 +23,6 @@
 // TODO make runtime configurable (secure_getenv())?
 #define FILL_JUNK 'Z'
 
-// TODO maybe make some debug messages runtime configurable
-// (secure_getenv())?
-//#define DEBUG 1
-
 #if !LIBC
 #if DEBUG
 #define malloc xmalloc
@@ -37,32 +33,11 @@
 #define reallocarray xreallocarray
 #define posix_memalign xposix_memalign
 #define aligned_alloc xaligned_alloc
-#define DPRINTF(format, ...) fprintf(stderr, "%s: " format, __FUNCTION__, ##__VA_ARGS__)
-#define DPRINTF_NOPREFIX(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
-#else // !DEBUG
-#if DEBUG_ALWAYS
-#define DPRINTF(format, ...) do {					\
-		char _buf[1024];					\
-		int _r = snprintf(_buf, sizeof(_buf), "%s: " format, __FUNCTION__, \
-				  ##__VA_ARGS__);			\
-		if (_r > 0)						\
-			_r = write(2, _buf, _r);			\
-		(void)_r;						\
-	} while (0)
-#define DPRINTF_NOPREFIX(format, ...) do {				\
-		char _buf[1024];					\
-		int _r = snprintf(_buf, sizeof(_buf), format, ##__VA_ARGS__); \
-		if (_r > 0)						\
-			_r = write(2, _buf, _r); \
-		(void)_r; \
-	} while (0)
-#else // DEBUG_ALWAYS
-#define DPRINTF(format, ...) do {} while (0)
-#define DPRINTF_NOPREFIX(format, ...) do {} while (0)
-#endif // DEBUG_ALWAYS
 #endif // DEBUG
 #endif // !LIBC
 
+// For secure_getenv()
+#define _GNU_SOURCE
 #include <assert.h>
 #include <cpuid.h>
 #include <errno.h>
@@ -145,6 +120,30 @@ static unsigned long malloc_random_address_mask;
 static int malloc_getrandom_bytes;
 static int malloc_user_va_space_bits;
 
+// Runtime options
+static bool malloc_debug;
+
+#define DPRINTF(format, ...) do {					\
+		if (malloc_debug) {					\
+			char _buf[1024];				\
+			int _r = snprintf(_buf, sizeof(_buf), "%s: " format, __FUNCTION__, \
+					  ##__VA_ARGS__);		\
+			if (_r > 0)					\
+				_r = write(2, _buf, _r);		\
+			(void)_r;					\
+		}							\
+	} while (0)
+
+#define DPRINTF_NOPREFIX(format, ...) do {				\
+	        if (malloc_debug) {					\
+			char _buf[1024];				\
+			int _r = snprintf(_buf, sizeof(_buf), format, ##__VA_ARGS__); \
+			if (_r > 0)					\
+				_r = write(2, _buf, _r);		\
+			(void)_r;					\
+		}							\
+	} while (0)
+
 // TODO Maybe the guard pages could be even larger than one page, for
 // example fill the entire 2MB page table entry, especially for large
 // allocations. If they hold a small number of large items (as opposed
@@ -220,7 +219,7 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 		}
 
 		ret = (void *)((unsigned long)ret + guard_size);
-		DPRINTF("returning %p, guard pages at %p+%lu, %p+%lu\n",
+		DPRINTF("returning %p, guard pages at %lx+%lu, %lx+%lu\n",
 			ret, lower_guard, guard_size, higher_guard, guard_size);
 		return ret;
 	}
@@ -373,7 +372,9 @@ static void *ptr_to_offset_in_page(void *page, unsigned int size_index, int num)
   Dump all pagetables for debugging.
 */
 static void pagetables_dump(const char *label) {
-#if DEBUG
+	if (!malloc_debug)
+		return;
+
 	unsigned int count;
 	struct small_pagelist *p;
 	count = 0;
@@ -400,7 +401,6 @@ static void pagetables_dump(const char *label) {
 	for (struct large_pagelist *p = state->large_pages; p; p = p->next, count++)
 		DPRINTF("%s: large_pages (%p) [%u] .page=%p .size=%lx\n",
 			label, p, count, p->page, p->size);
-#endif // DEBUG
 }
 
 /*
@@ -578,6 +578,10 @@ static __attribute__((constructor)) void init(void) {
 	// Copy temporary bitmap
 	state->pagetables->bitmap[0] = temp_bitmap;
 	pagetables_dump("initial");
+
+	if (secure_getenv("LIBASLRMALLOC_DEBUG"))
+		malloc_debug = true;
+
 }
 
 static __attribute__((destructor)) void fini(void) {
