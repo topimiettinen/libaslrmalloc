@@ -32,6 +32,9 @@
 #define reallocarray xreallocarray
 #define posix_memalign xposix_memalign
 #define aligned_alloc xaligned_alloc
+#define memalign xmemalign
+#define valloc xvalloc
+#define pvalloc xpvalloc
 #endif // DEBUG
 #endif // !LIBC
 
@@ -1009,6 +1012,30 @@ void *aligned_alloc(size_t alignment, size_t size) {
 	return ret;
 }
 
+/*
+  Obsolete. See manual page for memalign(). Locking is
+  handled by aligned_alloc().
+*/
+void *memalign(size_t alignment, size_t size) {
+	return aligned_alloc(alignment, size);
+}
+
+/*
+  Obsolete. See manual page for valloc(). Locking is
+  handled by aligned_alloc().
+*/
+void *valloc(size_t size) {
+	return aligned_alloc(PAGE_SIZE, size);
+}
+
+/*
+  Obsolete. See manual page for pvalloc(). Locking is
+  handled by aligned_alloc().
+*/
+void *pvalloc(size_t size) {
+	return aligned_alloc(PAGE_SIZE, size);
+}
+
 #endif // !LIBC
 
 #if DEBUG
@@ -1134,6 +1161,15 @@ int main(void) {
 	free(ptr);
 
 	ptr = aligned_alloc(8192, 1);
+	free(ptr);
+
+	ptr = memalign(8192, 1);
+	free(ptr);
+
+	ptr = valloc(1);
+	free(ptr);
+
+	ptr = pvalloc(1);
 	free(ptr);
 
 	errno = EBADF;
