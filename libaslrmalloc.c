@@ -121,6 +121,7 @@ static int malloc_user_va_space_bits;
 
 // Runtime options
 static bool malloc_debug;
+static bool malloc_debug_stats;
 static char malloc_fill_junk = FILL_JUNK;
 static bool malloc_strict_malloc0;
 static bool malloc_strict_posix_memalign_errno;
@@ -596,6 +597,8 @@ static __attribute__((constructor)) void init(void) {
 	if (secure_getenv("LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO"))
 		malloc_strict_posix_memalign_errno = true;
 
+	if (getenv("LIBASLRMALLOC_STATS"))
+		malloc_debug_stats = true;
 }
 
 static __attribute__((destructor)) void fini(void) {
@@ -604,7 +607,7 @@ static __attribute__((destructor)) void fini(void) {
 		return;
 	}
 
-	if (getenv("LIBASLRMALLOC_STATS")) {
+	if (malloc_debug_stats) {
 		pagetables_dump("final");
 		// Output as TSV
 		fprintf(stderr, "Size\tCount\n");
