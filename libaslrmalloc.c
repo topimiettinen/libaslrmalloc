@@ -585,6 +585,27 @@ static __attribute__((constructor)) void init(void) {
 	state->pagetables->bitmap[0] = temp_bitmap;
 	pagetables_dump("initial");
 
+	int rv;
+	char buf[512];
+	char profile_path[128];
+	FILE *profile_file;
+	rv = snprintf(profile_path, sizeof(profile_path), "/etc/libaslrmalloc/%s.profile", program_invocation_short_name);
+	if (0 < rv && rv < sizeof(profile_path)) {
+		if ((profile_file = fopen(profile_path, "r")) != NULL) {
+			while (fgets(buf, sizeof(buf), profile_file)) {
+				printf("%s\n", profile_path);
+				if (*buf == '#') {
+					continue;
+				} else if (strcmp(buf, "strict_malloc0\n") == 0) {
+					malloc_strict_malloc0 = true;
+				} else {
+					// TODO: unknown option, possible typo.
+				}
+			}
+			fclose(profile_file);
+		}
+	}
+
 	if (secure_getenv("LIBASLRMALLOC_DEBUG"))
 		malloc_debug = true;
 
