@@ -122,6 +122,7 @@ static int malloc_user_va_space_bits;
 // Runtime options
 static bool malloc_debug;
 static char malloc_fill_junk = FILL_JUNK;
+static bool malloc_strict_malloc0;
 
 #define DPRINTF(format, ...) do {					\
 		if (malloc_debug) {					\
@@ -588,6 +589,9 @@ static __attribute__((constructor)) void init(void) {
 	else
 		malloc_fill_junk = '\0';
 
+	if (secure_getenv("LIBASLRMALLOC_STRICT_MALLOC0"))
+		malloc_strict_malloc0 = true;
+
 }
 
 static __attribute__((destructor)) void fini(void) {
@@ -620,9 +624,12 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 	  sadly some applications expect it to return accessible
 	  memory and Glibc does that.
 	*/
-	// TODO make runtime configrable?
-	if (size == 0)
-		size = 1;
+	if (size == 0) {
+		if (malloc_strict_malloc0)
+			goto finish;
+		else
+			size = 1;
+	}
 
 	if (size > (1UL << malloc_user_va_space_bits)) {
 		ret_errno = ENOMEM;
