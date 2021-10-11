@@ -123,6 +123,7 @@ static int malloc_user_va_space_bits;
 static bool malloc_debug;
 static char malloc_fill_junk = FILL_JUNK;
 static bool malloc_strict_malloc0;
+static bool malloc_strict_posix_memalign_errno;
 
 #define DPRINTF(format, ...) do {					\
 		if (malloc_debug) {					\
@@ -592,6 +593,9 @@ static __attribute__((constructor)) void init(void) {
 	if (secure_getenv("LIBASLRMALLOC_STRICT_MALLOC0"))
 		malloc_strict_malloc0 = true;
 
+	if (secure_getenv("LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO"))
+		malloc_strict_posix_memalign_errno = true;
+
 }
 
 static __attribute__((destructor)) void fini(void) {
@@ -982,7 +986,9 @@ int posix_memalign(void **memptr, size_t alignment, size_t size) {
 	} else {
 		int ret = errno;
 		DPRINTF("returning error: %m\n");
-		errno = saved_errno;
+		// Glibc does not save errno
+		if (malloc_strict_posix_memalign_errno)
+			errno = saved_errno;
 		return ret;
 	}
 }
