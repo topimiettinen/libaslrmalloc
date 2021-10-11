@@ -134,6 +134,8 @@ struct malloc_state {
 	struct small_pagelist *pagetables;
 	struct small_pagelist *small_pages[MAX_SIZE_CLASSES];
 	struct large_pagelist *large_pages;
+	unsigned long small_count[MAX_SIZE_CLASSES];
+	unsigned long large_count;
 };
 static struct malloc_state *state;
 
@@ -578,6 +580,23 @@ static __attribute__((constructor)) void init(void) {
 	pagetables_dump("initial");
 }
 
+static __attribute__((destructor)) void fini(void) {
+	if (!state) {
+		DPRINTF("destructor called before constructor\n");
+		return;
+	}
+
+	if (getenv("LIBASLRMALLOC_STATS")) {
+		pagetables_dump("final");
+		// Output as TSV
+		fprintf(stderr, "Size\tCount\n");
+		for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++)
+			fprintf(stderr, "%d\t%ld\n",
+				1 << (i + MIN_ALLOC_BITS), state->small_count[i]);
+		fprintf(stderr, "%d\t%ld\n", PAGE_SIZE, state->large_count);
+	}
+}
+
 static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 	int ret_errno = errno;
 	void *ret = NULL;
@@ -621,6 +640,7 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 		new->next = state->large_pages;
 		DPRINTF("new large page %p .page=%p .size=%lx\n", new, new->page, new->size);
 		state->large_pages = new;
+		state->large_count++;
 		ret = new->page;
 	} else {
 		// New small allocation
@@ -666,6 +686,7 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 				   sizeof(new->access_randomizer_state));
 			DPRINTF("new small pagetable at index %u %p .page=%p .rnd=%lx\n",
 				index, new, new->page, new->access_randomizer_state);
+			state->small_count[index]++;
 			state->small_pages[index] = new;
 			pagetables_dump("post adding new page table");
 		}

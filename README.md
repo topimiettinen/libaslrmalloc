@@ -51,3 +51,18 @@ $ cat /proc/sys/kernel/randomize_va_space
 Left: `vi` uses glibc `malloc()`, which typically uses heap only.
 Right: `libaslrmalloc` has randomized the memory allocations over the address space and there's no heap. 
 ![image](https://user-images.githubusercontent.com/18518033/136421943-0bc63685-17b4-42af-8ae1-73618bbafd2a.png)
+
+Show statistics on slab use in TSV format:
+```bash
+$ LIBASLRMALLOC_STATS=1 LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libaslrmalloc.so.1 gnome-system-monitor
+Size    Count
+16      154
+32      482
+64      329
+128     1245
+256     2146
+512     6486
+1024    3178
+2048    1234
+4096    2423
+```
