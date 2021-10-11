@@ -41,6 +41,46 @@ $ dpkg-buildpackage --no-sign
 $ sudo dpkg -i ../libaslrmalloc1_1-1_amd64.deb
 ```
 
+## Usage
+
+Set the environment variable `LD_PRELOAD` to the path to libaslrmalloc before starting the program.  
+Example: `LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libaslrmalloc.so.1 gedit`
+
+Alternatively you can add `/usr/lib/x86_64-linux-gnu/libaslrmalloc.so.1` to `/etc/ld.so.preload`.
+This activates libaslrmalloc for all programs on your system including SUIDs (where `LD_PRELOAD` is ignore).
+Only programs in containers such as flatpaks will not use libaslrmalloc.
+
+### with systemd
+
+Create a drop-in configuration and add
+
+```
+Environment=LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libaslrmalloc.so.1
+```
+
+### with firejail
+
+Create a .local and add
+
+```
+env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libaslrmalloc.so.1
+```
+
+Note also that you can not use `LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libaslrmalloc.so.1 program`
+if program is a symlink to firejail created by firecfg.
+
+## Environment
+
+libaslrmalloc understands the following environment variables:
+
+- `LIBASLRMALLOC_DEBUG`*: Enable debugging.
+- `LIBASLRMALLOC_FILL_JUNK`*: Can be used to change the fill character or to disable filling if set to an empty string.
+- `LIBASLRMALLOC_STRICT_MALLOC0`*: If set to 1, `malloc(0)` will return `NULL`.
+- `LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO`*: If set to 1, `posix_memalign()` will restore the old errno in case of an error.
+- `LIBASLRMALLOC_STATS`: Enable stats.
+
+\* not supported if secure execution is required (e.g. SUID programs)
+
 ## Examples
 
 The example below disable kernel's ASLR to see the difference:
