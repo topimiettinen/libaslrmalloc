@@ -43,6 +43,7 @@
 #include <assert.h>
 #include <cpuid.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <malloc.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -502,6 +503,48 @@ static void pagetable_free(struct small_pagelist *entry) {
 	abort();
 }
 
+static void init_from_profile() {
+	int rv;
+	char profile_path[128];
+	int profile_file;
+	char profile_data[2048];
+	rv = snprintf(
+		profile_path,
+		sizeof(profile_path),
+		"/etc/libaslrmalloc/%s.profile",
+		program_invocation_short_name
+	);
+	if (0 > rv || sizeof(profile_path) < rv)
+		return;
+	if (-1 == (profile_file = open(profile_path, O_RDONLY)))
+		return;
+	rv = read(profile_file, profile_data, sizeof(profile_data));
+	if (-1 == rv || sizeof(profile_data) == rv) {
+		close(profile_file);
+		return;
+	}
+	profile_data[rv] = '\0';
+	close(profile_file);
+
+	char *saveptr = NULL;
+	char *line = strtok_r(profile_data, "\n", &saveptr);
+	if (NULL == line)
+		return;
+	do {
+		if (*line == '#') {
+			continue;
+		} else if (0 == strcmp(line, "strict_malloc0")) {
+			malloc_strict_malloc0 = true;
+		} else if (0 == strcmp(line, "strict_posix_memalign_errno")) {
+			malloc_strict_posix_memalign_errno = true;
+		} else if (0 == strncmp(line, "fill_junk=", 10)) {
+			malloc_fill_junk = line[10];
+		} else {
+			// TODO: unknown option, possible typo.
+		}
+	} while ((line = strtok_r(NULL, "\n", &saveptr)));
+}
+
 /*
   Initialization of the global state.
 
@@ -585,26 +628,7 @@ static __attribute__((constructor)) void init(void) {
 	state->pagetables->bitmap[0] = temp_bitmap;
 	pagetables_dump("initial");
 
-	int rv;
-	char buf[512];
-	char profile_path[128];
-	FILE *profile_file;
-	rv = snprintf(profile_path, sizeof(profile_path), "/etc/libaslrmalloc/%s.profile", program_invocation_short_name);
-	if (0 < rv && rv < sizeof(profile_path)) {
-		if ((profile_file = fopen(profile_path, "r")) != NULL) {
-			while (fgets(buf, sizeof(buf), profile_file)) {
-				printf("%s\n", profile_path);
-				if (*buf == '#') {
-					continue;
-				} else if (strcmp(buf, "strict_malloc0\n") == 0) {
-					malloc_strict_malloc0 = true;
-				} else {
-					// TODO: unknown option, possible typo.
-				}
-			}
-			fclose(profile_file);
-		}
-	}
+	init_from_profile();
 
 	if (secure_getenv("LIBASLRMALLOC_DEBUG"))
 		malloc_debug = true;
