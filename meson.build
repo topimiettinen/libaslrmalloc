@@ -21,9 +21,11 @@ libaslrmalloc = shared_library('aslrmalloc',
 # Tests
 #
 
+# Change this to project_source_root when we upgrade to meson 0.56 or higher
+test_profile_dir = meson.source_root() / 'tests/profiles'
 test_1 = executable('test_1',
   'libaslrmalloc.c',
-  c_args: ['-DDEBUG'],
+  c_args: ['-DDEBUG', '-DPROFILE_DIR="@0@"'.format(test_profile_dir)],
 )
 test('test_1', test_1, env: [
   'LIBASLRMALLOC_DEBUG=1',

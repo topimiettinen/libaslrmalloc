@@ -1,0 +1,5 @@
+debug
+fill_junk=X
+strict_malloc0
+strict_posix_memalign_errno
+stats

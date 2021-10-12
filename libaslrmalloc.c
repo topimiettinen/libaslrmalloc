@@ -504,26 +504,30 @@ static void pagetable_free(struct small_pagelist *entry) {
 }
 
 static void init_from_profile() {
-	int rv;
+	int r;
 	char profile_path[128];
 	int profile_file;
 	char profile_data[2048];
-	rv = snprintf(
+	r = snprintf(
 		profile_path,
 		sizeof(profile_path),
+#ifdef PROFILE_DIR
+		PROFILE_DIR "/%s.profile",
+#else
 		"/etc/libaslrmalloc/%s.profile",
+#endif
 		program_invocation_short_name
 	);
-	if (0 > rv || sizeof(profile_path) < rv)
+	if (r < 0 || r > sizeof(profile_path))
 		return;
-	if (-1 == (profile_file = open(profile_path, O_RDONLY)))
+	if ((profile_file = open(profile_path, O_RDONLY)) == -1)
 		return;
-	rv = read(profile_file, profile_data, sizeof(profile_data));
-	if (-1 == rv || sizeof(profile_data) == rv) {
+	r = read(profile_file, profile_data, sizeof(profile_data));
+	if (r == -1 || r == sizeof(profile_data)) {
 		close(profile_file);
 		return;
 	}
-	profile_data[rv] = '\0';
+	profile_data[r] = '\0';
 	close(profile_file);
 
 	char *saveptr = NULL;
@@ -533,12 +537,16 @@ static void init_from_profile() {
 	do {
 		if (*line == '#') {
 			continue;
-		} else if (0 == strcmp(line, "strict_malloc0")) {
-			malloc_strict_malloc0 = true;
-		} else if (0 == strcmp(line, "strict_posix_memalign_errno")) {
-			malloc_strict_posix_memalign_errno = true;
-		} else if (0 == strncmp(line, "fill_junk=", 10)) {
+		} else if (strcmp(line, "debug") == 0) {
+			malloc_debug = true;
+		} else if (strncmp(line, "fill_junk=", 10) == 0) {
 			malloc_fill_junk = line[10];
+		} else if (strcmp(line, "strict_malloc0") == 0) {
+			malloc_strict_malloc0 = true;
+		} else if (strcmp(line, "strict_posix_memalign_errno") == 0) {
+			malloc_strict_posix_memalign_errno = true;
+		} else if (strcmp(line, "stats") == 0) {
+			malloc_debug_stats = true;
 		} else {
 			// TODO: unknown option, possible typo.
 		}
@@ -1257,6 +1265,23 @@ int main(void) {
 	// Test OOM
 	ptr = aligned_alloc(8192, (size_t)1024*1024*1024*1024*1024);
 	assert(errno == ENOMEM);
+
+#ifdef PROFILE_DIR
+	malloc_debug = false;
+	malloc_fill_junk = FILL_JUNK;
+	malloc_strict_malloc0 = false;
+	malloc_strict_posix_memalign_errno = false;
+	malloc_debug_stats = false;
+
+	init_from_profile();
+
+	assert(malloc_debug == true);
+	assert(malloc_fill_junk == 'X');
+	assert(malloc_strict_malloc0 == true);
+	assert(malloc_strict_posix_memalign_errno == true);
+	assert(malloc_debug_stats == true);
+#endif
+
 	return 0;
 }
 #endif // DEBUG
