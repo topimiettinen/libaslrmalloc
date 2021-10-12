@@ -39,6 +39,7 @@ All slabs in a page are same size. Slabs come from a single page, so slabs in di
 The slabs are not resized and multiple slabs can't be allocated together,
 so if more memory is requested with `realloc()`, a new, larger slab is allocated.
 A small bitmap in each page table entry is used to account allocations and deallocations for a slab page.
+Entries are allocated from the bitmap in (weak) random order.
 
 Large allocations starting from 2049 bytes are allocated and freed at page granularity.
 
@@ -50,6 +51,8 @@ New memory is allocated with `mmap()` and the address of the new memory is rando
 Flag `MAP_FIXED_NOREPLACE` is used to avoid mapping new memory over an existing memory mapping.
 If the kernel rejects the address, `mmap()` is retried with a new random address.
 In the 47 bit address space available on many 64 bit processors, this should happen very rarely.
+Depending on alignment restrictions (minimum default 16 bytes), also the low bits are randomized when possible.
+
 Using this library on 32 bit systems may be a bad idea.
 
 `sbrk()`/`brk()` is not used at all. This function returns predictable addresses and it should never be used.
@@ -58,7 +61,10 @@ The library will also aggressively unmap any `free()`d memory or if that is not 
 fill the memory with non-zero bytes (inspired by BSD `malloc()` implementations).
 This also applies to old memory in `realloc()`.
 Unmapping and filling can help find use-after-free ([CWE-416](https://cwe.mitre.org/data/definitions/416.html)) bugs.
-Filling can be turned off at compile time.
+Filling can be turned off at runtime.
+
+Some Glibc specific deviations (`malloc(0)`, `calloc(X, Y)` where X * Y == 0, `errno` handling of `posix_memalign()`) are configurable
+to help portability to non-Glibc systems. For normal use, it's better to match Glibc in such cases.
 
 ### Previous implementations
 
@@ -77,14 +83,24 @@ Fix bugs.
 Integration, packaging, CI etc.
 
 When more slabs or large pages are needed, linked lists are used to connect them to main structure.
+This means that current implementation is O(N) for `free()`.
 This could be optimized to use hash tables (or modern tree structures) to speed up freeing memory without weakening ASLR.
 
-Some opportunities to increase ASLR further are not yet utilized:
-- randomize order of allocation of slabs by scrambling the bitmap bits instead of linear search from bit 0.
-- randomize low bits of the start address if the allocation is smaller (by multiples of 16 bytes for alignment) than the slab or pages for large allocations.
-For some loss of memory (which is secondary), this could be done always (select larger slab size than requested, use extra space for randomization).
-- for x86-64, even the 16 byte alignment could be made optional (are there any hard alignment restrictions? performance does not count).
+For some loss of memory (which is secondary), further low bits of the start address could randomized always
+(select larger slab size than requested, use extra space for randomization).
 
+For x86-64, even the 16 bytes alignment could be made optional (are there any hard alignment restrictions? performance does not count).
+Glibc uses 8 bytes alignment by default.
+
+Randomization function for allocation of slabs by scrambling the bitmap is weak.
+The goal is
+that, given an address of an allocated memory block, it's impossible
+to determine addresses of previous or future allocations in the same
+slab page without knowing the secret (which is not in the same
+page). This is also helped by having a separate state for each slab
+page. Of course the number of entries in a page is always very
+small.
+  
 Statistics of real usage patterns should be considered. If an application is not using a lot of small allocations,
 the slab mechanism could be dropped and full pages would be always allocated, so each allocation would be truly separate from others.
 This wastes memory but could be acceptable with some applications.
@@ -100,6 +116,7 @@ and own global structure, so there would be no locking issues.
 Freeing memory from a different thread would not be possible or very hard.
 
 Perhaps mutexes could be fine grained (one for internal page table, one for each small and one for the large page table).
+The bottleneck could then be that then also page table allocator would need a mutex and it would be shared by all allocations.
 
 Debugging could be more robust in multithread environment and early library startup.
 
@@ -113,10 +130,3 @@ That should only affect kernel's internal VMA structures, not CPU page tables.
 On Intel CPUs, `pkey_mprotect()` could be used to protect internal structures with [pkeys](https://man7.org/linux/man-pages/man7/pkeys.7.html) (weakly).
 
 Fully used slab pages could be kept in separate page table lists, so they wouldn't be consulted when looking for a free slab.
-
-Filling memory with junk could be made runtime configurable.
-
-Maybe some debug messages could be enabled at runtime.
-
-Some Glibc specific deviations (`malloc(0)`, `calloc(X, Y)` where X * Y == 0, `errno` handling of `posix_memalign()`) could be made configurable
-(portability check mode?) to help portability to non-Glibc systems. For normal use, it's better to match Glibc in such cases.
