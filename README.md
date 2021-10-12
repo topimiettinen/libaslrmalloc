@@ -11,7 +11,27 @@ layout randomization ([ASLR](https://en.wikipedia.org/wiki/Address_space_layout_
 This is achieved by not trying to keep the pages together, forcing the kernel to map
 pages at random addresses and unmapping old memory immediately when possible.
 
-It has the following features:
+The amount of ALSR depends on processor type, size of allocation and possible user specified alignment (`posix_memalign()`).
+
+Assuming a processor with 48 bits of virtual address space (47 is available to user applications) and no extra alignment restrictions:
+Size | Lowest randomized bit | Total
+---:|---:|---:
+16 | 4 | 43
+32 | 5 | 42
+64 | 6 | 41
+128 | 7 | 40
+256 | 8 | 39
+512 | 9 | 38
+1024 | 10 | 37
+2048 | 11 | 36
+4096+ | 12 | 35
+
+In addition, if the allocation is between the above sizes, the extra space is used to randomize the start address (within alignment restrictions).
+For example, 1600 bytes fit in a slab of 2048 bytes. There's extra space of 2048 - 1600 = 448 bytes to randomize the start of the
+allocation, but alignment needs to be taken care of as well.
+For 16 bytes (default) alignment, 448 / 16 = 28 different random positions are possible, yielding fractional randomization of 4.8 bits.
+
+`libaslrmalloc` has also the following features:
 * drains kernel random bits pool
 * fragments memory layout, consuming more memory in kernel page tables
 * trashes caches, slowing down the system
@@ -43,12 +63,12 @@ $ sudo dpkg -i ../libaslrmalloc1_1-1_amd64.deb
 
 ## Usage
 
-Set the environment variable `LD_PRELOAD` to the path to libaslrmalloc before starting the program.  
+Set the environment variable `LD_PRELOAD` to the path to `libaslrmalloc` before starting the program.
 Example: `LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libaslrmalloc.so.1 gedit`
 
 Alternatively you can add `/usr/lib/x86_64-linux-gnu/libaslrmalloc.so.1` to `/etc/ld.so.preload`.
-This activates libaslrmalloc for all programs on your system including SUIDs (where `LD_PRELOAD` is ignore).
-Only programs in containers such as flatpaks will not use libaslrmalloc.
+This activates `libaslrmalloc` for all programs on your system including SUID programs (for which `LD_PRELOAD` is ignored).
+Only programs in containers such as flatpaks will not use `libaslrmalloc`.
 
 ### with systemd
 
@@ -58,7 +78,7 @@ Create a drop-in configuration and add
 Environment=LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libaslrmalloc.so.1
 ```
 
-### with firejail
+### with Firejail
 
 Create a .local and add
 
