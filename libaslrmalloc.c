@@ -384,7 +384,6 @@ static void pagetables_dump(const char *label) {
 
 	unsigned int count;
 	struct small_pagelist *p;
-	count = 0;
 	for (p = state->pagetables, count = 0; p; p = p->next, count++) {
 		DPRINTF("%s: pagetables (%p) [%u] .page=%p rnd=%lx bm=",
 			label, p, count, p->page, p->access_randomizer_state);
