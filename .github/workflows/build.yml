@@ -38,10 +38,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # v4.0.0
       - name: Install packages
-        run: sudo apt-get install build-essential gcc clang meson
+        run: sudo apt-get install build-essential gcc clang clang-tools meson
       - name: Setup
         run: meson setup builddir/
       - name: Compile with (${{ env.CC }})
         run: meson compile -C builddir/ -v
       - name: Test
         run: meson test -C builddir/ -v
+      - name Scan-build
+        if: ${{ matrix.env.CC == 'clang' }}
+        run: ninja -C builddir/ scan-build
