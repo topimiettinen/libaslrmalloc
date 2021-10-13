@@ -537,9 +537,6 @@ static __attribute__((constructor)) void init(void) {
 
 	// Also calculate number of random bytes needed for each address
 	malloc_getrandom_bytes = (malloc_user_va_space_bits - PAGE_BITS + 7) / 8;
-	DPRINTF("%d VA space bits, mask %16.16lx, getrandom() bytes %d\n",
-		malloc_user_va_space_bits, malloc_random_address_mask,
-		malloc_getrandom_bytes);
 
 	/*
 	  A temporary bitmap is used to store allocation of the first
@@ -568,7 +565,6 @@ static __attribute__((constructor)) void init(void) {
 	unsigned int num_slabs = align_up_size(sizeof(*state)) / align_up_size(sizeof(struct small_pagelist));
 	unsigned int offset = randomize_int(0, last_offset - 1 - num_slabs);
 	state = ptr_to_offset_in_page(pagetables, pages_index, offset);
-	DPRINTF("main state at %p +%zu\n", state, sizeof(*state));
 
 	// Mark slab allocation for global state in the bitmap.
 	for (unsigned int i = offset; i < offset + num_slabs; i++)
@@ -583,7 +579,6 @@ static __attribute__((constructor)) void init(void) {
 		   sizeof(state->pagetables->access_randomizer_state));
 	// Copy temporary bitmap
 	state->pagetables->bitmap[0] = temp_bitmap;
-	pagetables_dump("initial");
 
 	if (secure_getenv("LIBASLRMALLOC_DEBUG"))
 		malloc_debug = true;
@@ -602,6 +597,12 @@ static __attribute__((constructor)) void init(void) {
 
 	if (getenv("LIBASLRMALLOC_STATS"))
 		malloc_debug_stats = true;
+
+	DPRINTF("%d VA space bits, mask %16.16lx, getrandom() bytes %d\n",
+		malloc_user_va_space_bits, malloc_random_address_mask,
+		malloc_getrandom_bytes);
+	DPRINTF("main state at %p +%zu\n", state, sizeof(*state));
+	pagetables_dump("initial");
 }
 
 static __attribute__((destructor)) void fini(void) {
