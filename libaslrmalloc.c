@@ -1096,6 +1096,7 @@ int main(void) {
 		void *ptrv[ROUNDS2];
 		for (int j = 0; j < ROUNDS2; j++) {
 			ptrv[j] = malloc(1UL << i);
+			assert(ptrv[j]);
 			// Test that all memory is writable
 			memset(ptrv[j], 0, 1UL << i);
 		}
@@ -1103,9 +1104,11 @@ int main(void) {
 		for (int j = 0; j < ROUNDS2; j++) {
 			ptrv[j] = realloc(ptrv[j], (1UL << i) + 4096);
 			// Test that all memory is writable
+			assert(ptrv[j]);
 			memset(ptrv[j], 0, (1UL << i) + 4096);
 			ptrv[j] = realloc(ptrv[j], (1UL << i));
 			// Test that all memory is writable
+			assert(ptrv[j]);
 			memset(ptrv[j], 0, 1UL << i);
 		}
 #endif // DEBUG_2
@@ -1121,6 +1124,7 @@ int main(void) {
 	void *ptrv[ROUNDS3];
 	for (int j = 0; j < ROUNDS3; j++) {
 		ptrv[j] = malloc(2048);
+		assert(ptrv[j]);
 		// Test that memory is writable
 		memset(ptrv[j], 0, 2048);
 	}
@@ -1142,6 +1146,7 @@ int main(void) {
 	free(ptr);
 
 	ptr = malloc(1);
+	assert(ptr);
 	size_t usable_size = malloc_usable_size(ptr);
 	assert(usable_size >= 1);
 	/*
@@ -1151,6 +1156,7 @@ int main(void) {
 	memset(ptr, 0, 1);
 	ptr = realloc(ptr, 0); // Equal to free()
 	assert(ptr == NULL);
+	free(ptr);
 
 	/*
 	  The manual page says that calloc(0) may return NULL but
@@ -1161,9 +1167,11 @@ int main(void) {
 	free(ptr);
 
 	ptr = calloc(4096, 1);
+	assert(ptr);
 	// Test that all memory is writable
 	memset(ptr, 0, 4096);
 	void *ptr2 = calloc(4096, 4);
+	assert(ptr2);
 	// Test that all memory is writable
 	memset(ptr2, 0, 4096 * 4);
 	free(ptr);
