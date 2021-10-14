@@ -58,7 +58,6 @@
 #define PAGE_BITS 12
 #define PAGE_SIZE (1 << PAGE_BITS)
 #define PAGE_MASK (~(PAGE_SIZE - 1))
-#define PAGE_ALIGN_DOWN(size) ((size) & PAGE_MASK)
 #define PAGE_ALIGN_UP(size) (((size) + (PAGE_SIZE - 1)) & PAGE_MASK)
 
 // TODO assumes 64 bit longs
@@ -130,25 +129,28 @@ static char malloc_fill_junk = FILL_JUNK;
 static bool malloc_strict_malloc0;
 static bool malloc_strict_posix_memalign_errno;
 
-#define DPRINTF(format, ...) do {					\
-		if (malloc_debug) {					\
-			char _buf[1024];				\
-			int _r = snprintf(_buf, sizeof(_buf), "%s: " format, __FUNCTION__, \
-					  ##__VA_ARGS__);		\
-			if (_r > 0)					\
-				_r = write(2, _buf, _r);		\
-			(void)_r;					\
-		}							\
+#define DPRINTF(format, ...)                                                 \
+	do {                                                                 \
+		if (malloc_debug) {                                          \
+			char _buf[1024];                                     \
+			int _r = snprintf(_buf, sizeof(_buf), "%s: " format, \
+					  __FUNCTION__, ##__VA_ARGS__);      \
+			if (_r > 0)                                          \
+				_r = write(2, _buf, _r);                     \
+			(void)_r;                                            \
+		}                                                            \
 	} while (0)
 
-#define DPRINTF_NOPREFIX(format, ...) do {				\
-	        if (malloc_debug) {					\
-			char _buf[1024];				\
-			int _r = snprintf(_buf, sizeof(_buf), format, ##__VA_ARGS__); \
-			if (_r > 0)					\
-				_r = write(2, _buf, _r);		\
-			(void)_r;					\
-		}							\
+#define DPRINTF_NOPREFIX(format, ...)                                 \
+	do {                                                          \
+		if (malloc_debug) {                                   \
+			char _buf[1024];                              \
+			int _r = snprintf(_buf, sizeof(_buf), format, \
+					  ##__VA_ARGS__);             \
+			if (_r > 0)                                   \
+				_r = write(2, _buf, _r);              \
+			(void)_r;                                     \
+		}                                                     \
 	} while (0)
 
 // TODO Maybe the guard pages could be even larger than one page, for
@@ -187,7 +189,7 @@ static unsigned int randomize_int(unsigned int start, unsigned int end) {
   that happens (errno == EEXIST), retry,
 */
 static void *mmap_random(size_t size, unsigned long extra_mask) {
-	unsigned long stack = (unsigned long) __builtin_frame_address(0);
+	unsigned long stack = (unsigned long)__builtin_frame_address(0);
 	unsigned long guard_size = get_guard_size(size);
 	for (;;) {
 		unsigned long addr;
@@ -201,7 +203,8 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 		if (addr >= stack - STACK_ZONE && addr <= stack + STACK_ZONE)
 			continue;
 
-		void *ret = mmap((void *)addr, size + 2 * guard_size, PROT_READ | PROT_WRITE,
+		void *ret = mmap((void *)addr, size + 2 * guard_size,
+				 PROT_READ | PROT_WRITE,
 				 MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_PRIVATE,
 				 -1, 0);
 		if (ret == MAP_FAILED) {
@@ -218,7 +221,8 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 			abort();
 		}
 
-		unsigned long higher_guard = (unsigned long)ret + guard_size + size;
+		unsigned long higher_guard = (unsigned long)ret + guard_size +
+			size;
 		r = mprotect((void *)higher_guard, guard_size, PROT_NONE);
 		if (r < 0) {
 			perror("mprotect higher guard");
@@ -226,8 +230,8 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 		}
 
 		ret = (void *)((unsigned long)ret + guard_size);
-		DPRINTF("returning %p, guard pages at %lx+%lu, %lx+%lu\n",
-			ret, lower_guard, guard_size, higher_guard, guard_size);
+		DPRINTF("returning %p, guard pages at %lx+%lu, %lx+%lu\n", ret,
+			lower_guard, guard_size, higher_guard, guard_size);
 		return ret;
 	}
 }
@@ -303,7 +307,8 @@ static unsigned int scramble_index(unsigned int index, unsigned int max,
 				   unsigned long access_randomizer_state) {
 	assert(max > 0);
 	unsigned int ret = (index + access_randomizer_state) % max;
-	DPRINTF("scrambled %u -> %u (max %u state %lx)\n", index, ret, max, access_randomizer_state);
+	DPRINTF("scrambled %u -> %u (max %u state %lx)\n", index, ret, max,
+		access_randomizer_state);
 	return ret;
 }
 
@@ -311,22 +316,29 @@ static unsigned int scramble_index(unsigned int index, unsigned int max,
   Find a clear (free slab) bit in the bitmap. Not all words in the
   bitmap are used in full.
 */
-static int bitmap_find_clear(const unsigned long *bitmap, unsigned int bitmap_bits,
-				   unsigned long access_randomizer_state) {
-	DPRINTF("bitmap_bits %u (%u words)\n", bitmap_bits, bitmap_bits >> ULONG_BITS);
+static int bitmap_find_clear(const unsigned long *bitmap,
+			     unsigned int bitmap_bits,
+			     unsigned long access_randomizer_state) {
+	DPRINTF("bitmap_bits %u (%u words)\n", bitmap_bits,
+		bitmap_bits >> ULONG_BITS);
 
 	for (unsigned int bit = 0; bit < bitmap_bits; bit++) {
-		unsigned int scrambled_bit = scramble_index(bit, bitmap_bits, access_randomizer_state);
+		unsigned int scrambled_bit = scramble_index(
+			bit, bitmap_bits, access_randomizer_state);
 
 		unsigned int word_index = scrambled_bit >> ULONG_BITS;
 		unsigned int bit_index = scrambled_bit & ~ULONG_MASK;
 		unsigned long mask = (unsigned long)-1;
 		if (bitmap_bits - (scrambled_bit & ULONG_MASK) < ULONG_SIZE)
-			mask = (1UL << (bitmap_bits - (scrambled_bit & ULONG_MASK))) - 1;
+			mask = (1UL
+				<< (bitmap_bits - (scrambled_bit & ULONG_MASK))) -
+				1;
 		unsigned long word = bitmap[word_index] & mask;
 
-		DPRINTF("checking index %u+%u word %lx mask %lx bit %d (original %d) bits left %d\n",
-			word_index, bit_index, word, mask, scrambled_bit, bit, bitmap_bits - scrambled_bit);
+		DPRINTF("checking index %u+%u word %lx mask %lx bit %d "
+			"(original %d) bits left %d\n",
+			word_index, bit_index, word, mask, scrambled_bit, bit,
+			bitmap_bits - scrambled_bit);
 		if ((word & (1UL << bit_index)) == 0) {
 			DPRINTF("returning %d\n", scrambled_bit);
 			return scrambled_bit;
@@ -340,8 +352,10 @@ static int bitmap_find_clear(const unsigned long *bitmap, unsigned int bitmap_bi
   Check if all bits in the bitmap are clear. Not all words in the
   bitmap are used in full.
 */
-static bool bitmap_is_empty(const unsigned long *bitmap, unsigned int bitmap_bits) {
-	DPRINTF("bitmap_bits %u (%u words)\n", bitmap_bits, bitmap_bits >> ULONG_BITS);
+static bool bitmap_is_empty(const unsigned long *bitmap,
+			    unsigned int bitmap_bits) {
+	DPRINTF("bitmap_bits %u (%u words)\n", bitmap_bits,
+		bitmap_bits >> ULONG_BITS);
 
 	for (unsigned int b = 0; b < bitmap_bits; b += 1 << ULONG_BITS) {
 		unsigned int i = b >> ULONG_BITS;
@@ -351,8 +365,8 @@ static bool bitmap_is_empty(const unsigned long *bitmap, unsigned int bitmap_bit
 			mask = (1UL << (bitmap_bits - b)) - 1;
 		unsigned long word = bitmap[i] & mask;
 
-		DPRINTF("checking index %u word %lx mask %lx bits left %d\n",
-			i, word, mask, bitmap_bits - b);
+		DPRINTF("checking index %u word %lx mask %lx bits left %d\n", i,
+			word, mask, bitmap_bits - b);
 		if (word != 0) {
 			DPRINTF("returning false\n");
 			return false;
@@ -370,8 +384,10 @@ static void *ptr_to_offset_in_page(void *page, unsigned int size_index, int num)
 	assert(size_index <= MAX_SIZE_CLASSES);
 	unsigned long offset = (1 << (size_index + MIN_ALLOC_BITS)) * num;
 	unsigned long address = ((unsigned long)page) + offset;
-	DPRINTF("offsetting page %p size index %u (0x%x) item number %d -> 0x%lx\n",
-		page, size_index, 1 << (size_index + MIN_ALLOC_BITS), num, address);
+	DPRINTF("offsetting page %p size index %u (0x%x) item number "
+		"%d -> 0x%lx\n",
+		page, size_index, 1 << (size_index + MIN_ALLOC_BITS), num,
+		address);
 	return (void *)address;
 }
 
@@ -385,8 +401,8 @@ static void pagetables_dump(const char *label) {
 	unsigned int count;
 	struct small_pagelist *p;
 	for (p = state->pagetables, count = 0; p; p = p->next, count++) {
-		DPRINTF("%s: pagetables (%p) [%u] .page=%p rnd=%lx bm=",
-			label, p, count, p->page, p->access_randomizer_state);
+		DPRINTF("%s: pagetables (%p) [%u] .page=%p rnd=%lx bm=", label,
+			p, count, p->page, p->access_randomizer_state);
 		for (int i = 0; i < BITMAP_ULONGS; i++)
 			DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
 		DPRINTF_NOPREFIX("\n");
@@ -395,8 +411,10 @@ static void pagetables_dump(const char *label) {
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
 		count = 0;
 		for (p = state->small_pages[i]; p; p = p->next, count++) {
-			DPRINTF("%s: small_pages[%u] (%p) [%u] .page=%p .rnd=%lx bm=",
-				label, i, p, count, p->page, p->access_randomizer_state);
+			DPRINTF("%s: small_pages[%u] (%p) [%u] .page=%p "
+				".rnd=%lx bm=",
+				label, i, p, count, p->page,
+				p->access_randomizer_state);
 			for (int i = 0; i < BITMAP_ULONGS; i++)
 				DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
 			DPRINTF_NOPREFIX("\n");
@@ -404,9 +422,10 @@ static void pagetables_dump(const char *label) {
 	}
 
 	count = 0;
-	for (struct large_pagelist *p = state->large_pages; p; p = p->next, count++)
-		DPRINTF("%s: large_pages (%p) [%u] .page=%p .size=%lx\n",
-			label, p, count, p->page, p->size);
+	for (struct large_pagelist *p = state->large_pages; p;
+	     p = p->next, count++)
+		DPRINTF("%s: large_pages (%p) [%u] .page=%p .size=%lx\n", label,
+			p, count, p->page, p->size);
 }
 
 /*
@@ -418,12 +437,15 @@ static struct small_pagelist *pagetable_new(void) {
 
 	unsigned int index = get_index(sizeof(*ret));
 	for (;;) {
-		for (struct small_pagelist *p = state->pagetables; p; p = p->next) {
-			int offset = bitmap_find_clear(p->bitmap, bitmap_bits(sizeof(*ret)),
-						       p->access_randomizer_state);
+		for (struct small_pagelist *p = state->pagetables; p;
+		     p = p->next) {
+			int offset = bitmap_find_clear(
+				p->bitmap, bitmap_bits(sizeof(*ret)),
+				p->access_randomizer_state);
 
 			if (offset >= 0) {
-				ret = ptr_to_offset_in_page(p->page, index, offset);
+				ret = ptr_to_offset_in_page(p->page, index,
+							    offset);
 				bitmap_set(p->bitmap, offset);
 				goto found;
 			}
@@ -440,20 +462,23 @@ static struct small_pagelist *pagetable_new(void) {
 		*/
 		// TODO offset could be randomized instead of last index
 		int offset = last_index(sizeof(*ret));
-		struct small_pagelist *new = ptr_to_offset_in_page(page, index, offset);
+		struct small_pagelist *new = ptr_to_offset_in_page(page, index,
+								   offset);
 		new->page = page;
 		bitmap_set(new->bitmap, offset);
-		get_random(&new->access_randomizer_state, sizeof(new->access_randomizer_state));
+		get_random(&new->access_randomizer_state,
+			   sizeof(new->access_randomizer_state));
 		new->next = state->pagetables;
-		DPRINTF("new pagetable %p page %p rnd %lx\n", new, new->page, new->access_randomizer_state);
+		DPRINTF("new pagetable %p page %p rnd %lx\n", new, new->page,
+			new->access_randomizer_state);
 		// New page is inserted at head of list, retry.
 		state->pagetables = new;
 	}
 
- found:
+found:
 	DPRINTF("returning %p\n", ret);
 	return ret;
- oom:
+oom:
 	return NULL;
 }
 
@@ -462,12 +487,17 @@ static struct small_pagelist *pagetable_new(void) {
 */
 static void pagetable_free(struct small_pagelist *entry) {
 	int size_index = get_index(sizeof(struct small_pagelist));
-	for (struct small_pagelist *p = state->pagetables, *prev = p; p; prev = p, p = p->next) {
+	for (struct small_pagelist *p = state->pagetables, *prev = p; p;
+	     prev = p, p = p->next) {
 		DPRINTF(".page=%p bm=%lx\n", p->page, p->bitmap[0]);
-		if (((unsigned long)p->page & PAGE_MASK) == ((unsigned long)entry & PAGE_MASK)) {
-			// Calculate the number of the entry for its address using the size class
-			unsigned int bit = ((unsigned long)entry & ~PAGE_MASK) >> (size_index + MIN_ALLOC_BITS);
-			DPRINTF("found match %p == %p, clearing bit %u (index %d)\n",
+		if (((unsigned long)p->page & PAGE_MASK) ==
+		    ((unsigned long)entry & PAGE_MASK)) {
+			// Calculate the number of the entry for its address
+			// using the size class
+			unsigned int bit = ((unsigned long)entry & ~PAGE_MASK) >>
+				(size_index + MIN_ALLOC_BITS);
+			DPRINTF("found match %p == %p, clearing bit %u "
+				"(index %d)\n",
 				entry, p->page, bit, size_index);
 			bitmap_clear(p->bitmap, bit);
 
@@ -475,16 +505,21 @@ static void pagetable_free(struct small_pagelist *entry) {
 			  Check for emptiness excluding the last bit
 			  (entry used for managing the page itself)
 			*/
-			if (bitmap_is_empty(p->bitmap, last_index(sizeof(struct small_pagelist)))) {
-				unsigned long guard_size = get_guard_size(PAGE_SIZE);
-				DPRINTF("unmap pagetable %p (guards %lu)\n", p->page, guard_size);
+			if (bitmap_is_empty(
+				    p->bitmap,
+				    last_index(sizeof(struct small_pagelist)))) {
+				unsigned long guard_size = get_guard_size(
+					PAGE_SIZE);
+				DPRINTF("unmap pagetable %p (guards %lu)\n",
+					p->page, guard_size);
 				/*
 				  Because the page contains the entry
 				  for managing itself, grab next entry
 				  pointer before the page is unmapped.
 				*/
 				struct small_pagelist *next = p->next;
-				int r = munmap((void *)((unsigned long)p->page - guard_size),
+				int r = munmap((void *)((unsigned long)p->page -
+							guard_size),
 					       PAGE_SIZE + 2 * guard_size);
 				if (r < 0) {
 					perror("munmap");
@@ -533,7 +568,8 @@ static __attribute__((constructor)) void init(void) {
 	malloc_user_va_space_bits = 36;
 	if (r == 1)
 		malloc_user_va_space_bits = ((eax >> 8) & 0xff) - 1;
-	malloc_random_address_mask = ((1UL << malloc_user_va_space_bits) - 1) & PAGE_MASK;
+	malloc_random_address_mask = ((1UL << malloc_user_va_space_bits) - 1) &
+		PAGE_MASK;
 
 	// Also calculate number of random bytes needed for each address
 	malloc_getrandom_bytes = (malloc_user_va_space_bits - PAGE_BITS + 7) / 8;
@@ -562,7 +598,8 @@ static __attribute__((constructor)) void init(void) {
 	*/
 	int pages_index = get_index(sizeof(struct small_pagelist));
 	unsigned int last_offset = last_index(sizeof(struct small_pagelist));
-	unsigned int num_slabs = align_up_size(sizeof(*state)) / align_up_size(sizeof(struct small_pagelist));
+	unsigned int num_slabs = align_up_size(sizeof(*state)) /
+		align_up_size(sizeof(struct small_pagelist));
 	unsigned int offset = randomize_int(0, last_offset - 1 - num_slabs);
 	state = ptr_to_offset_in_page(pagetables, pages_index, offset);
 
@@ -573,7 +610,8 @@ static __attribute__((constructor)) void init(void) {
 	// Mark allocation for initial internal page tables in the bitmap.
 	// TODO offset could be randomized instead of last index
 	bitmap_set(&temp_bitmap, last_offset);
-	state->pagetables = ptr_to_offset_in_page(pagetables, pages_index, last_offset);
+	state->pagetables = ptr_to_offset_in_page(pagetables, pages_index,
+						  last_offset);
 	state->pagetables->page = pagetables;
 	get_random(&state->pagetables->access_randomizer_state,
 		   sizeof(state->pagetables->access_randomizer_state));
@@ -616,8 +654,8 @@ static __attribute__((destructor)) void fini(void) {
 		// Output as TSV
 		fprintf(stderr, "Size\tCount\n");
 		for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++)
-			fprintf(stderr, "%d\t%ld\n",
-				1 << (i + MIN_ALLOC_BITS), state->small_count[i]);
+			fprintf(stderr, "%d\t%ld\n", 1 << (i + MIN_ALLOC_BITS),
+				state->small_count[i]);
 		fprintf(stderr, "%d\t%ld\n", PAGE_SIZE, state->large_count);
 	}
 }
@@ -657,7 +695,8 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 
 		// TODO separate mutexes for large pages and page table entries?
 		pthread_mutex_lock(&malloc_lock);
-		struct large_pagelist *new = (struct large_pagelist *)pagetable_new();
+		struct large_pagelist *new =
+			(struct large_pagelist *)pagetable_new();
 		if (!new)
 			goto oom;
 		void *page = mmap_random(real_size, extra_mask);
@@ -667,21 +706,26 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 		new->page = page;
 		new->size = size;
 		new->next = state->large_pages;
-		DPRINTF("new large page %p .page=%p .size=%lx\n", new, new->page, new->size);
+		DPRINTF("new large page %p .page=%p .size=%lx\n", new,
+			new->page, new->size);
 		state->large_pages = new;
 		state->large_count++;
 		/*
 		  Randomize start of for example 5000 byte allocation
 		  with 256 byte alignment
 		*/
-		unsigned int align_bits = __builtin_ctzl(extra_mask & MIN_ALLOC_MASK);
+		unsigned int align_bits = __builtin_ctzl(extra_mask &
+							 MIN_ALLOC_MASK);
 		unsigned long page_offset = 0;
 		if (align_bits < PAGE_BITS) {
 			unsigned long slack = (real_size - size) >> align_bits;
 			if (slack) {
-				page_offset = randomize_int(0, slack) << align_bits;
-				DPRINTF("randomized %p with offset %lu (%lu positions, %d bits)\n",
-					new->page, page_offset, slack, align_bits);
+				page_offset = randomize_int(0, slack)
+					<< align_bits;
+				DPRINTF("randomized %p with offset %lu "
+					"(%lu positions, %d bits)\n",
+					new->page, page_offset, slack,
+					align_bits);
 			}
 		}
 		alloc_start = new->page;
@@ -691,36 +735,50 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 		pagetables_dump("pre malloc");
 		real_size = 1 << (index + MIN_ALLOC_BITS);
 
-		// TODO separate mutexes for each slab class and page table entries?
+		// TODO separate mutexes for each slab class and page table
+		// entries?
 		pthread_mutex_lock(&malloc_lock);
 
 		for (;;) {
 			// Try to find a free entry in the free slabs
-			for (struct small_pagelist *p = state->small_pages[index]; p; p = p->next) {
-				int offset = bitmap_find_clear(p->bitmap, bitmap_bits(size),
-							       p->access_randomizer_state);
+			for (struct small_pagelist *p = state->small_pages[index];
+			     p; p = p->next) {
+				int offset = bitmap_find_clear(
+					p->bitmap, bitmap_bits(size),
+					p->access_randomizer_state);
 
 				if (offset >= 0) {
-					DPRINTF("found offset %d ptr %p\n", offset, p->page);
-					ret = ptr_to_offset_in_page(p->page, index, offset);
+					DPRINTF("found offset %d ptr %p\n",
+						offset, p->page);
+					ret = ptr_to_offset_in_page(
+						p->page, index, offset);
 					bitmap_set(p->bitmap, offset);
 					/*
 					  Randomize start of for example 1600
 					  byte allocation with 32 byte alignment
 					  in a 2048 byte slab
 					*/
-					unsigned int align_bits = __builtin_ctzl(extra_mask & MIN_ALLOC_MASK);
+					unsigned int align_bits = __builtin_ctzl(
+						extra_mask & MIN_ALLOC_MASK);
 					unsigned long page_offset = 0;
-					if (align_bits < (index + MIN_ALLOC_BITS)) {
-						unsigned long slack = (real_size - size) >> align_bits;
+					if (align_bits <
+					    (index + MIN_ALLOC_BITS)) {
+						unsigned long slack = (real_size -
+								       size) >>
+							align_bits;
 						if (slack) {
-							page_offset = randomize_int(0, slack) << align_bits;
+							page_offset =
+								randomize_int(0, slack)
+								<< align_bits;
 							DPRINTF("randomized %p with offset %lu (%lu positions, %d bits)\n",
-								ret, page_offset, slack, align_bits);
+								ret, page_offset,
+								slack,
+								align_bits);
 						}
 					}
 					alloc_start = ret;
-					ret = (void *)((unsigned long)ret + page_offset);
+					ret = (void *)((unsigned long)ret +
+						       page_offset);
 					goto found;
 				}
 			}
@@ -745,14 +803,16 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 			new->next = state->small_pages[index];
 			get_random(&new->access_randomizer_state,
 				   sizeof(new->access_randomizer_state));
-			DPRINTF("new small pagetable at index %u %p .page=%p .rnd=%lx\n",
-				index, new, new->page, new->access_randomizer_state);
+			DPRINTF("new small pagetable at index %u %p .page=%p "
+				".rnd=%lx\n",
+				index, new, new->page,
+				new->access_randomizer_state);
 			state->small_count[index]++;
 			state->small_pages[index] = new;
 			pagetables_dump("post adding new page table");
 		}
 	}
- found:
+found:
 	// TODO more mutexes
 	pthread_mutex_unlock(&malloc_lock);
 
@@ -762,11 +822,11 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 		memset(alloc_start, malloc_fill_junk, real_size);
 	}
 	pagetables_dump("post malloc");
- finish:
+finish:
 	DPRINTF("returning %p\n", ret);
 	errno = ret_errno;
 	return ret;
- oom:
+oom:
 	// TODO more mutexes
 	pthread_mutex_unlock(&malloc_lock);
 	errno = ENOMEM;
@@ -802,8 +862,10 @@ size_t malloc_usable_size(void *ptr) {
 	// TODO separate mutexes for large pages and page table entries?
 	pthread_mutex_lock(&malloc_lock);
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
-		for (struct small_pagelist *p = state->small_pages[i]; p; p = p->next) {
-			DPRINTF("pages[%u] .page=%p bm=%lx\n", i, p->page, p->bitmap[0]);
+		for (struct small_pagelist *p = state->small_pages[i]; p;
+		     p = p->next) {
+			DPRINTF("pages[%u] .page=%p bm=%lx\n", i, p->page,
+				p->bitmap[0]);
 			if ((unsigned long)p->page == page_address) {
 				// Recover randomization
 				unsigned long offset = address &
@@ -834,7 +896,7 @@ size_t malloc_usable_size(void *ptr) {
 	// TODO Optionally just ignore the error?
 	fprintf(stderr, "malloc_usable_size: %p not found!\n", ptr);
 	abort();
- finish:
+finish:
 	// TODO more mutexes
 	pthread_mutex_unlock(&malloc_lock);
 	DPRINTF("returning %lx\n", ret);
@@ -864,16 +926,24 @@ void free(void *ptr) {
 	// TODO separate mutexes for large pages and page table entries?
 	pthread_mutex_lock(&malloc_lock);
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
-		for (struct small_pagelist *p = state->small_pages[i], *prev = p; p; prev = p, p = p->next) {
+		for (struct small_pagelist *p = state->small_pages[i], *prev = p;
+		     p; prev = p, p = p->next) {
 			if ((unsigned long)p->page == page_address) {
-				unsigned int bits = bitmap_bits(1 << (i + MIN_ALLOC_BITS));
-				bitmap_clear(p->bitmap, (address & ~PAGE_MASK) >> (i + MIN_ALLOC_BITS));
+				unsigned int bits = bitmap_bits(
+					1 << (i + MIN_ALLOC_BITS));
+				bitmap_clear(p->bitmap,
+					     (address & ~PAGE_MASK) >>
+						     (i + MIN_ALLOC_BITS));
 				if (bitmap_is_empty(p->bitmap, bits)) {
-					unsigned long guard_size = get_guard_size(PAGE_SIZE);
+					unsigned long guard_size =
+						get_guard_size(PAGE_SIZE);
 					// Immediately unmap pages
-					DPRINTF("unmap small %p (guards %lu)\n", p->page, guard_size);
-					int r = munmap((void *)((unsigned long)p->page - guard_size),
-						       PAGE_SIZE + 2 * guard_size);
+					DPRINTF("unmap small %p (guards %lu)\n",
+						p->page, guard_size);
+					int r = munmap(
+						(void *)((unsigned long)p->page -
+							 guard_size),
+						PAGE_SIZE + 2 * guard_size);
 					if (r < 0) {
 						perror("munmap");
 						abort();
@@ -885,11 +955,16 @@ void free(void *ptr) {
 					pagetable_free(p);
 				} else if (malloc_fill_junk != '\0') {
 					// Filter out randomization
-					ptr = (void *)(address & ~((1UL << (i + MIN_ALLOC_BITS)) - 1));
-					// Immediately fill the freed memory with junk
-					DPRINTF("fill junk %p +%u\n",
-						ptr, 1 << (i + MIN_ALLOC_BITS));
-					memset(ptr, malloc_fill_junk, 1 << (i + MIN_ALLOC_BITS));
+					ptr = (void *)(address &
+						       ~((1UL
+							  << (i + MIN_ALLOC_BITS)) -
+							 1));
+					// Immediately fill the freed memory
+					// with junk
+					DPRINTF("fill junk %p +%u\n", ptr,
+						1 << (i + MIN_ALLOC_BITS));
+					memset(ptr, malloc_fill_junk,
+					       1 << (i + MIN_ALLOC_BITS));
 				}
 				goto found;
 			}
@@ -902,14 +977,17 @@ void free(void *ptr) {
 	*/
 	DPRINTF("trying large list\n");
 
-	for (struct large_pagelist *p = state->large_pages, *prev = p; p; prev = p, p = p->next) {
+	for (struct large_pagelist *p = state->large_pages, *prev = p; p;
+	     prev = p, p = p->next) {
 		DPRINTF(".page=%p .size=%lx\n", p->page, p->size);
 		if ((unsigned long)p->page == page_address) {
 			// Immediately unmap all freed memory
 			unsigned long guard_size = get_guard_size(p->size);
-			DPRINTF("unmap large %p +%lu + guard %lu\n", p->page, p->size, guard_size);
-			int r = munmap((void *)((unsigned long)p->page - guard_size),
-				       p->size + 2 * guard_size);
+			DPRINTF("unmap large %p +%lu + guard %lu\n", p->page,
+				p->size, guard_size);
+			int r = munmap(
+				(void *)((unsigned long)p->page - guard_size),
+				p->size + 2 * guard_size);
 			if (r < 0) {
 				perror("munmap");
 				abort();
@@ -926,19 +1004,18 @@ void free(void *ptr) {
 	// TODO Optionally just ignore the error?
 	fprintf(stderr, "free: %p not found!\n", ptr);
 	abort();
- found:
+found:
 	// TODO more mutexes
 	pthread_mutex_unlock(&malloc_lock);
 	pagetables_dump("post free");
- finish:
+finish:
 	errno = saved_errno;
 }
 
 /*
   See manual page for calloc(). Locking is handled by malloc().
 */
-void *calloc(size_t nmemb, size_t size)
-{
+void *calloc(size_t nmemb, size_t size) {
 	int saved_errno = errno;
 
 	/*
@@ -962,8 +1039,7 @@ void *calloc(size_t nmemb, size_t size)
   See manual page for calloc(). Locking is handled by
   malloc_usable_size(), malloc() and free().
 */
-void *realloc(void *ptr, size_t new_size)
-{
+void *realloc(void *ptr, size_t new_size) {
 	int saved_errno = errno;
 
 	if (!ptr)
@@ -987,9 +1063,10 @@ void *realloc(void *ptr, size_t new_size)
 
 	if (new_size > old_size && malloc_fill_junk != '\0') {
 		// Fill new part of memory with junk
-		DPRINTF("fill junk %p +%lu\n",
-			&((char *)ret)[old_size], new_size - old_size);
-		memset(&((char *)ret)[old_size], malloc_fill_junk, new_size - old_size);
+		DPRINTF("fill junk %p +%lu\n", &((char *)ret)[old_size],
+			new_size - old_size);
+		memset(&((char *)ret)[old_size], malloc_fill_junk,
+		       new_size - old_size);
 	}
 	free(ptr);
 	DPRINTF("returning %p\n", ret);
@@ -1197,13 +1274,15 @@ int main(void) {
 	// Error expected: bad alignment
 	int r = posix_memalign(&ptr, 3, 1);
 	// Neither errno nor the pointer should be touched
-	assert(errno == EBADF && r == EINVAL && ptr == (void *)(unsigned long)1234);
+	assert(errno == EBADF && r == EINVAL &&
+	       ptr == (void *)(unsigned long)1234);
 
 	errno = EBADF;
 	// Error expected: bad alignment
 	r = posix_memalign(&ptr, 48, 1);
 	// Neither errno nor the pointer should be touched
-	assert(errno == EBADF && r == EINVAL && ptr == (void *)(unsigned long)1234);
+	assert(errno == EBADF && r == EINVAL &&
+	       ptr == (void *)(unsigned long)1234);
 
 	errno = EBADF;
 	r = posix_memalign(&ptr, 8192, 1);
@@ -1234,18 +1313,18 @@ int main(void) {
 
 	errno = EBADF;
 	// Test OOM
-	ptr = malloc((size_t)1024*1024*1024*1024*1024);
+	ptr = malloc((size_t)1024 * 1024 * 1024 * 1024 * 1024);
 	assert(errno == ENOMEM);
 
 	errno = EBADF;
 	// Test OOM
-	ptr = realloc(NULL, (size_t)1024*1024*1024*1024*1024);
+	ptr = realloc(NULL, (size_t)1024 * 1024 * 1024 * 1024 * 1024);
 	assert(errno == ENOMEM);
 
 	errno = EBADF;
 	ptr = malloc(1);
 	// Test OOM
-	ptr2 = realloc(ptr, (size_t)1024*1024*1024*1024*1024);
+	ptr2 = realloc(ptr, (size_t)1024 * 1024 * 1024 * 1024 * 1024);
 	assert(errno == ENOMEM && ptr2 == NULL);
 
 	errno = EBADF;
@@ -1261,7 +1340,7 @@ int main(void) {
 
 	ptr = (void *)(unsigned long)1234;
 	// Test OOM
-	r = posix_memalign(&ptr, 8192, (size_t)1024*1024*1024*1024*1024);
+	r = posix_memalign(&ptr, 8192, (size_t)1024 * 1024 * 1024 * 1024 * 1024);
 	/*
 	  The manual page claims that errno would not be set, but
 	  actually Glibc does that.
@@ -1270,7 +1349,7 @@ int main(void) {
 
 	errno = EBADF;
 	// Test OOM
-	ptr = aligned_alloc(8192, (size_t)1024*1024*1024*1024*1024);
+	ptr = aligned_alloc(8192, (size_t)1024 * 1024 * 1024 * 1024 * 1024);
 	assert(errno == ENOMEM);
 	return 0;
 }
