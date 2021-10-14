@@ -677,8 +677,6 @@ static __attribute__((constructor)) void init(void) {
 	char *junk = secure_getenv("LIBASLRMALLOC_FILL_JUNK");
 	if (junk)
 		malloc_fill_junk = *junk;
-	else
-		malloc_fill_junk = '\0';
 
 	if (secure_getenv("LIBASLRMALLOC_STRICT_MALLOC0"))
 		malloc_strict_malloc0 = true;
@@ -686,7 +684,7 @@ static __attribute__((constructor)) void init(void) {
 	if (secure_getenv("LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO"))
 		malloc_strict_posix_memalign_errno = true;
 
-	if (getenv("LIBASLRMALLOC_STATS"))
+	if (secure_getenv("LIBASLRMALLOC_STATS"))
 		malloc_debug_stats = true;
 
 	DPRINTF("%d VA space bits, mask %16.16lx, getrandom() bytes %d\n",
