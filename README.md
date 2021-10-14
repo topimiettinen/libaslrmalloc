@@ -91,15 +91,27 @@ if program is a symlink to firejail created by firecfg.
 
 ## Environment
 
-libaslrmalloc understands the following environment variables:
+`libaslrmalloc` understands the following environment variables:
 
-- `LIBASLRMALLOC_DEBUG`*: Enable debugging.
-- `LIBASLRMALLOC_FILL_JUNK`*: Can be used to change the fill character or to disable filling if set to an empty string.
-- `LIBASLRMALLOC_STRICT_MALLOC0`*: If set to 1, `malloc(0)` will return `NULL`.
-- `LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO`*: If set to 1, `posix_memalign()` will restore the old errno in case of an error.
+- `LIBASLRMALLOC_DEBUG`: Enable debugging.
+- `LIBASLRMALLOC_FILL_JUNK`: Can be used to change the fill character or to disable filling if set to an empty string.
+- `LIBASLRMALLOC_STRICT_MALLOC0`: If set to 1, `malloc(0)` will return `NULL`.
+- `LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO`: If set to 1, `posix_memalign()` will restore the old errno in case of an error.
 - `LIBASLRMALLOC_STATS`: Enable stats.
 
-\* not supported if secure execution is required (e.g. SUID programs)
+Environment variables aren't used if secure execution is required (e.g. SUID programs).
+
+## Profiles
+`libaslrmalloc` automatically loads a profile in `/etc/libaslrmalloc/` named `app.profile` using the name of the application. 
+The settings in the profile are same as with the environment variables but without the prefix and lowercase, for example:
+
+```
+debug
+fill_junk=X
+strict_malloc0
+strict_posix_memalign_errno
+stats
+```
 
 ## Examples
 
