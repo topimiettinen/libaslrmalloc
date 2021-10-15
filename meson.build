@@ -8,6 +8,7 @@ project('libaslrmalloc',
 )
 
 add_project_arguments('-fno-builtin', language: 'c')
+add_project_link_arguments('-ldl', language: 'c')
 
 threads = dependency('threads')
 libaslrmalloc = shared_library('aslrmalloc',

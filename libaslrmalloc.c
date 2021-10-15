@@ -42,6 +42,7 @@
 #define _GNU_SOURCE
 #include <assert.h>
 #include <cpuid.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <malloc.h>
@@ -127,8 +128,21 @@ static int malloc_user_va_space_bits;
 static bool malloc_debug;
 static bool malloc_debug_stats;
 static char malloc_fill_junk = FILL_JUNK;
+static bool malloc_passthrough;
 static bool malloc_strict_malloc0;
 static bool malloc_strict_posix_memalign_errno;
+
+static void *(*libc_malloc)(size_t);
+static size_t (*libc_malloc_usable_size)(void *);
+static void (*libc_free)(void *);
+static void *(*libc_calloc)(size_t, size_t);
+static void *(*libc_realloc)(void *, size_t);
+static void *(*libc_reallocarray)(void *, size_t, size_t);
+static int (*libc_posix_memalign)(void **, size_t, size_t);
+static void *(*libc_aligned_alloc)(size_t, size_t);
+static void *(*libc_memalign)(size_t, size_t);
+static void *(*libc_valloc)(size_t);
+static void *(*libc_pvalloc)(size_t);
 
 #define DPRINTF(format, ...)                                                 \
 	do {                                                                 \
@@ -574,6 +588,8 @@ static void init_from_profile() {
 			continue;
 		} else if (strcmp(line, "debug") == 0) {
 			malloc_debug = true;
+		} else if (strcmp(line, "passthrough") == 0) {
+			malloc_passthrough = true;
 		} else if (strncmp(line, "fill_junk=", 10) == 0) {
 			malloc_fill_junk = line[10];
 		} else if (strcmp(line, "strict_malloc0") == 0) {
@@ -674,6 +690,9 @@ static __attribute__((constructor)) void init(void) {
 	if (secure_getenv("LIBASLRMALLOC_DEBUG"))
 		malloc_debug = true;
 
+	if (secure_getenv("LIBASLRMALLOC_PASSTHROUGH"))
+		malloc_passthrough = true;
+
 	char *junk = secure_getenv("LIBASLRMALLOC_FILL_JUNK");
 	if (junk)
 		malloc_fill_junk = *junk;
@@ -686,6 +705,35 @@ static __attribute__((constructor)) void init(void) {
 
 	if (secure_getenv("LIBASLRMALLOC_STATS"))
 		malloc_debug_stats = true;
+
+	if (malloc_passthrough) {
+		libc_malloc = dlsym(RTLD_NEXT, "malloc");
+		libc_malloc_usable_size = dlsym(RTLD_NEXT, "malloc_usable_size");
+		libc_free = dlsym(RTLD_NEXT, "free");
+		libc_calloc = dlsym(RTLD_NEXT, "calloc");
+		libc_realloc = dlsym(RTLD_NEXT, "realloc");
+		libc_reallocarray = dlsym(RTLD_NEXT, "reallocarray");
+		libc_posix_memalign = dlsym(RTLD_NEXT, "posix_memalign");
+		libc_aligned_alloc = dlsym(RTLD_NEXT, "aligned_alloc");
+		libc_memalign = dlsym(RTLD_NEXT, "memalign");
+		libc_valloc = dlsym(RTLD_NEXT, "valloc");
+		libc_pvalloc = dlsym(RTLD_NEXT, "pvalloc");
+
+		if (
+			libc_malloc == NULL
+			|| libc_malloc_usable_size == NULL
+			|| libc_free == NULL
+			|| libc_calloc == NULL
+			|| libc_realloc == NULL
+			|| libc_reallocarray == NULL
+			|| libc_posix_memalign == NULL
+			|| libc_aligned_alloc == NULL
+			|| libc_memalign == NULL
+			|| libc_valloc == NULL
+			|| libc_pvalloc == NULL
+		)
+			abort();
+	}
 
 	DPRINTF("%d VA space bits, mask %16.16lx, getrandom() bytes %d\n",
 		malloc_user_va_space_bits, malloc_random_address_mask,
@@ -888,6 +936,9 @@ oom:
   See manual page for malloc().
 */
 void *malloc(size_t size) {
+	if (malloc_passthrough)
+		return libc_malloc(size);
+
 	return aligned_malloc(size, -1);
 }
 
@@ -895,6 +946,9 @@ void *malloc(size_t size) {
   Glibc extension. See manual page for malloc_usable_size().
 */
 size_t malloc_usable_size(void *ptr) {
+	if (malloc_passthrough)
+		return libc_malloc_usable_size(ptr);
+
 	int saved_errno = errno;
 	size_t ret = 0;
 
@@ -960,6 +1014,9 @@ finish:
   warns that errno shall be preserved.
 */
 void free(void *ptr) {
+	if (malloc_passthrough)
+		return libc_free(ptr);
+
 	int saved_errno = errno;
 
 	if (!ptr)
@@ -1067,6 +1124,9 @@ finish:
   See manual page for calloc(). Locking is handled by malloc().
 */
 void *calloc(size_t nmemb, size_t size) {
+	if (malloc_passthrough)
+		return libc_calloc(nmemb, size);
+
 	int saved_errno = errno;
 
 	/*
@@ -1091,6 +1151,9 @@ void *calloc(size_t nmemb, size_t size) {
   malloc_usable_size(), malloc() and free().
 */
 void *realloc(void *ptr, size_t new_size) {
+	if (malloc_passthrough)
+		return libc_realloc(ptr, new_size);
+
 	int saved_errno = errno;
 
 	if (!ptr)
@@ -1130,6 +1193,9 @@ void *realloc(void *ptr, size_t new_size) {
   handled by realloc().
 */
 void *reallocarray(void *ptr, size_t nmemb, size_t size) {
+	if (malloc_passthrough)
+		return libc_reallocarray(ptr, nmemb, size);
+
 	__uint128_t new_size = (__uint128_t)nmemb * (__uint128_t)size;
 	if (new_size > (__uint128_t)(1ULL << malloc_user_va_space_bits)) {
 		errno = ENOMEM;
@@ -1143,6 +1209,9 @@ void *reallocarray(void *ptr, size_t nmemb, size_t size) {
   handled by aligned_malloc().
 */
 int posix_memalign(void **memptr, size_t alignment, size_t size) {
+	if (malloc_passthrough)
+		return libc_posix_memalign(memptr, alignment, size);
+
 	int saved_errno = errno;
 
 	DPRINTF("posix_memalign(%p, %lx, %lx)\n", memptr, alignment, size);
@@ -1174,6 +1243,9 @@ int posix_memalign(void **memptr, size_t alignment, size_t size) {
   handled by posix_memalign().
 */
 void *aligned_alloc(size_t alignment, size_t size) {
+	if (malloc_passthrough)
+		return libc_aligned_alloc(alignment, size);
+
 	DPRINTF("aligned_alloc(%lx, %lx)\n", alignment, size);
 	void *ret = NULL;
 	int r = posix_memalign(&ret, alignment, size);
@@ -1187,6 +1259,9 @@ void *aligned_alloc(size_t alignment, size_t size) {
   handled by aligned_alloc().
 */
 void *memalign(size_t alignment, size_t size) {
+	if (malloc_passthrough)
+		return libc_memalign(alignment, size);
+
 	return aligned_alloc(alignment, size);
 }
 
@@ -1195,6 +1270,9 @@ void *memalign(size_t alignment, size_t size) {
   handled by aligned_alloc().
 */
 void *valloc(size_t size) {
+	if (malloc_passthrough)
+		return libc_valloc(size);
+
 	return aligned_alloc(PAGE_SIZE, size);
 }
 
@@ -1203,6 +1281,9 @@ void *valloc(size_t size) {
   handled by aligned_alloc().
 */
 void *pvalloc(size_t size) {
+	if (malloc_passthrough)
+		return libc_pvalloc(size);
+
 	return aligned_alloc(PAGE_SIZE, size);
 }
 
