@@ -14,17 +14,28 @@ sysconfdir = prefixdir / get_option('sysconfdir')
 conf.set_quoted('LIBDIR', libdir)
 conf.set_quoted('SYSCONFDIR', sysconfdir)
 config_h = configure_file(
-  output : 'config.h',
-  configuration : conf)
+  output: 'config.h',
+  configuration: conf,
+)
 
-add_project_arguments('-fno-builtin', language: 'c')
-add_project_link_arguments('-ldl', language: 'c')
+cflags = ['-fno-builtin']
 
+dl = meson.get_compiler('c').find_library('dl')
 threads = dependency('threads')
 libaslrmalloc = shared_library('aslrmalloc',
   'libaslrmalloc.c',
-  dependencies: threads,
+  dependencies: [dl, threads],
+  c_args: cflags,
   version: meson.project_version().split('-').get(0),
+  install: true,
+)
+
+libaslrmallocrun = executable('libaslrmallocrun',
+  'libaslrmallocrun.c',
+  c_args: '-DLIBASLRMALLOC="@0@"'.format(
+    libdir / libaslrmalloc.full_path().split('/')[-1]
+  ),
+  link_with: libaslrmalloc,
   install: true,
 )
 
@@ -36,7 +47,8 @@ libaslrmalloc = shared_library('aslrmalloc',
 test_profile_dir = meson.source_root() / 'tests'
 test_1 = executable('test_1',
   'libaslrmalloc.c',
-  c_args: ['-DDEBUG', '-DPROFILE_DIR="@0@"'.format(test_profile_dir), '-DEXPECT_PROFILE_CHANGE'],
+  dependencies: dl,
+  c_args: [cflags, '-DDEBUG', '-DPROFILE_DIR="@0@"'.format(test_profile_dir), '-DEXPECT_PROFILE_CHANGE'],
 )
 test('test_1', test_1, env: [
   'LIBASLRMALLOC_DEBUG=1',
@@ -54,7 +66,8 @@ test('test_1_b', test_1, env: [
 # Warning: test allocates 2^ROUNDS1 memory
 test_2 = executable('test_2',
   'libaslrmalloc.c',
-  c_args: ['-DDEBUG', '-DDEBUG_2', '-DROUNDS1=10', '-DROUNDS2=16'],
+  dependencies: dl,
+  c_args: [cflags, '-DDEBUG', '-DDEBUG_2', '-DROUNDS1=10', '-DROUNDS2=16'],
 )
 test('test_2', test_2, env: ['LIBASLRMALLOC_FILL_JUNK='])
 
@@ -64,20 +77,23 @@ test('test_3', cat, args: '/proc/self/maps', env: preload)
 
 test_4 = executable('test_4',
   'libaslrmalloc.c',
-  c_args: ['-DDEBUG', '-DLIBC'],
+  dependencies: dl,
+  c_args: [cflags, '-DDEBUG', '-DLIBC'],
 )
 test('test_4', test_4)
 
 test_5 = executable('test_5',
   'libaslrmalloc.c',
-  c_args: ['-DDEBUG', '-DDEBUG_2', '-DROUNDS1=1', '-DROUNDS2=520'],
+  dependencies: dl,
+  c_args: [cflags, '-DDEBUG', '-DDEBUG_2', '-DROUNDS1=1', '-DROUNDS2=520'],
 )
 test('test_5', test_5)
 
 # Test zero sized profile
 test_6 = executable('test_6',
   'libaslrmalloc.c',
-  c_args: ['-DDEBUG', '-DROUNDS1=1', '-DROUNDS2=1',
+  dependencies: dl,
+  c_args: [cflags, '-DDEBUG', '-DROUNDS1=1', '-DROUNDS2=1',
   '-DPROFILE_DIR="@0@"'.format(test_profile_dir)],
 )
 test('test_6', test_6)
@@ -85,7 +101,8 @@ test('test_6', test_6)
 # Test too large profile
 test_7 = executable('test_7',
   'libaslrmalloc.c',
-  c_args: ['-DDEBUG', '-DROUNDS1=1', '-DROUNDS2=1',
+  dependencies: dl,
+  c_args: [cflags, '-DDEBUG', '-DROUNDS1=1', '-DROUNDS2=1',
   '-DPROFILE_DIR="@0@"'.format(test_profile_dir)],
 )
 test('test_7', test_7)
@@ -93,7 +110,8 @@ test('test_7', test_7)
 # Test passthrough profile
 test_8 = executable('test_8',
   'libaslrmalloc.c',
-  c_args: ['-DDEBUG', '-DROUNDS1=1', '-DROUNDS2=1', '-DEXPECT_PASSTHROUGH',
+  dependencies: dl,
+  c_args: [cflags, '-DDEBUG', '-DROUNDS1=1', '-DROUNDS2=1', '-DEXPECT_PASSTHROUGH',
   '-DPROFILE_DIR="@0@"'.format(test_profile_dir)],
 )
 test('test_8', test_8, env: [
