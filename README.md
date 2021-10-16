@@ -145,3 +145,18 @@ Size    Count
 2048    1234
 4096    2423
 ```
+## Performance
+NB: Algorithms are still under development.
+Current implementation with hash tables and linked lists is O(N) for `free()` for large number of allocations.
+With tree structures it should be possible to get O(log N) performance without loss of ASLR.
+
+- Performance is enough to run entire system with `/etc/ld.so.preload` forcing `libaslrmalloc` everywhere, with some patience.
+- System services seem to run completely fine. They aren't usually performance critical and they may use memory allocations very sparingly. 
+- For desktop apps, in some cases there's only a small noticeable (less than few seconds) delay on startup, but after that the programs run normally.
+- With some programs there are also small pauses or slowness during execution.
+- In the other extreme, start up of FreeOrion is unacceptably slow (like 15 minutes).
+- Thunderbird doesn't start.
+- Firefox uses an internal allocation library and can't benefit from the library.
+- Chromium crashes.
+- 0ad starts very fast, but crashes later.
+- 32 bit applications like Steam are not supported (and Steam also uses Chromium).
