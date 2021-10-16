@@ -66,6 +66,9 @@ $ sudo dpkg -i ../libaslrmalloc1_1-1_amd64.deb
 Set the environment variable `LD_PRELOAD` to the path to `libaslrmalloc` before starting the program.
 Example: `LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libaslrmalloc.so.1 gedit`
 
+To make this easier, `libaslrmalloc` comes with a program called `libaslrmallocrun`
+which sets this environment variable for you: `libaslrmallocrun gedit`
+
 Alternatively you can add `/usr/lib/x86_64-linux-gnu/libaslrmalloc.so.1` to `/etc/ld.so.preload`.
 This activates `libaslrmalloc` for all programs on your system including SUID programs (for which `LD_PRELOAD` is ignored).
 Only programs in containers such as flatpaks will not use `libaslrmalloc`.
