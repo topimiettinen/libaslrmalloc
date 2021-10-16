@@ -82,15 +82,20 @@ Fix bugs.
 
 Integration, packaging, CI etc.
 
-When more slabs or large pages are needed, linked lists are used to connect them to main structure.
-This means that current implementation is O(N) for `free()`.
-This could be optimized to use hash tables (or modern tree structures) to speed up freeing memory without weakening ASLR.
+When more slabs or large pages are needed, a hash table is used with linked lists to connect them to main structure.
+This means that current implementation is O(N) for `free()` for large number of allocations (though O(1) for the first 512).
+This should be optimized to use modern tree structures to speed up freeing memory without weakening ASLR.
 
 For some loss of memory (which is secondary), further low bits of the start address could randomized always
 (select larger slab size than requested, use extra space for randomization).
 
 For x86-64, even the 16 bytes alignment could be made optional (are there any hard alignment restrictions? performance does not count).
 Glibc uses 8 bytes alignment by default.
+
+In case memory next to the allocation is filled with junk characters, `free()` should check that they are intact.
+
+Also when memory slab is reused on allocation, the memory could be checked for writes after `free()` by the previous user.
+Even all free blocks could be checked in the same page.
 
 Randomization function for allocation of slabs by scrambling the bitmap is weak.
 The goal is
@@ -104,10 +109,6 @@ small.
 Statistics of real usage patterns should be considered. If an application is not using a lot of small allocations,
 the slab mechanism could be dropped and full pages would be always allocated, so each allocation would be truly separate from others.
 This wastes memory but could be acceptable with some applications.
-
-Related to the above, the library could be made tunable to fit several different scenarios with different implementations.
-The library could even try to find out the name of the application and automatically load different application profiles
-(like profiles of [Firejail](https://github.com/netblue30/firejail)), or use for example a configuration file or an environment variable.
 
 Global state could be randomized a bit by splitting it to page table slab sized smaller pieces and allocating them randomly.
 
