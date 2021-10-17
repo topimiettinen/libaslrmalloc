@@ -36,6 +36,10 @@ test('test_1', test_1, env: [
   'LIBASLRMALLOC_STATS=1',
   ]
 )
+test('test_1_b', test_1, env: [
+  'LIBASLRMALLOC_PASSTHROUGH=1',
+  ]
+)
 
 # Warning: test allocates 2^ROUNDS1 memory
 test_2 = executable('test_2',
