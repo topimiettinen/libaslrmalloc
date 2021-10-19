@@ -747,8 +747,9 @@ static __attribute__((constructor)) void init(void) {
 	if (secure_getenv("LIBASLRMALLOC_DEBUG"))
 		malloc_debug = true;
 
-	if (secure_getenv("LIBASLRMALLOC_PASSTHROUGH"))
-		malloc_passthrough = true;
+	// Temporarily disable environment method
+	//if (secure_getenv("LIBASLRMALLOC_PASSTHROUGH"))
+	//	malloc_passthrough = true;
 
 	char *junk = secure_getenv("LIBASLRMALLOC_FILL_JUNK");
 	if (junk)
