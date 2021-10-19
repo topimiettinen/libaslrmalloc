@@ -1593,21 +1593,29 @@ int main(void) {
 	ptr = aligned_alloc(8192, (size_t)1024 * 1024 * 1024 * 1024 * 1024);
 	assert(errno == ENOMEM);
 
+#if !LIBC
 #ifdef PROFILE_DIR
-	malloc_debug = false;
-	malloc_fill_junk = FILL_JUNK;
-	malloc_strict_malloc0 = false;
-	malloc_strict_posix_memalign_errno = false;
-	malloc_debug_stats = false;
-
-	init_from_profile();
-
+#if EXPECT_PROFILE_CHANGE
 	assert(malloc_debug == true);
 	assert(malloc_fill_junk == 'X');
 	assert(malloc_strict_malloc0 == true);
 	assert(malloc_strict_posix_memalign_errno == true);
 	assert(malloc_debug_stats == true);
-#endif
+#else // EXPECT_PROFILE_CHANGE
+	assert(malloc_debug == false);
+	assert(malloc_fill_junk == FILL_JUNK);
+	assert(malloc_strict_malloc0 == false);
+	assert(malloc_strict_posix_memalign_errno == false);
+	assert(malloc_debug_stats == false);
+#endif // EXPECT_PROFILE_CHANGE
+#endif // PROFILE_DIR
+
+#if EXPECT_PASSTHROUGH
+	assert(malloc_passthrough == true);
+#else // EXPECT_PASSTHROUGH
+	assert(malloc_passthrough == false);
+#endif // EXPECT_PASSTHROUGH
+#endif // !LIBC
 
 	return 0;
 }

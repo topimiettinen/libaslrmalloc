@@ -26,7 +26,7 @@ libaslrmalloc = shared_library('aslrmalloc',
 test_profile_dir = meson.source_root() / 'tests/profiles'
 test_1 = executable('test_1',
   'libaslrmalloc.c',
-  c_args: ['-DDEBUG', '-DPROFILE_DIR="@0@"'.format(test_profile_dir)],
+  c_args: ['-DDEBUG', '-DPROFILE_DIR="@0@"'.format(test_profile_dir), '-DEXPECT_PROFILE_CHANGE'],
 )
 test('test_1', test_1, env: [
   'LIBASLRMALLOC_DEBUG=1',
@@ -63,3 +63,27 @@ test_5 = executable('test_5',
   c_args: ['-DDEBUG', '-DDEBUG_2', '-DROUNDS1=1', '-DROUNDS2=520'],
 )
 test('test_5', test_5)
+
+# Test zero sized profile
+test_6 = executable('test_6',
+  'libaslrmalloc.c',
+  c_args: ['-DDEBUG', '-DROUNDS1=1', '-DROUNDS2=1',
+  '-DPROFILE_DIR="@0@"'.format(test_profile_dir)],
+)
+test('test_6', test_6)
+
+# Test too large profile
+test_7 = executable('test_7',
+  'libaslrmalloc.c',
+  c_args: ['-DDEBUG', '-DROUNDS1=1', '-DROUNDS2=1',
+  '-DPROFILE_DIR="@0@"'.format(test_profile_dir)],
+)
+test('test_7', test_7)
+
+# Test passthrough profile
+test_8 = executable('test_8',
+  'libaslrmalloc.c',
+  c_args: ['-DDEBUG', '-DROUNDS1=1', '-DROUNDS2=1', '-DEXPECT_PASSTHROUGH',
+  '-DPROFILE_DIR="@0@"'.format(test_profile_dir)],
+)
+test('test_8', test_8)
