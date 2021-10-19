@@ -667,6 +667,7 @@ static __attribute__((constructor)) void init(void) {
 	if (state)
 		return;
 
+	int saved_errno = errno;
 	/*
 	   Get number of virtual address bits with CPUID
 	   instruction. There are lots of different values from 36 to
@@ -797,6 +798,7 @@ static __attribute__((constructor)) void init(void) {
 		malloc_getrandom_bytes);
 	DPRINTF("main state at %p +%zu\n", state, sizeof(*state));
 	pagetables_dump("initial");
+	errno = saved_errno;
 }
 
 static __attribute__((destructor)) void fini(void) {
