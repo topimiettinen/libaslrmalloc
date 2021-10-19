@@ -1610,13 +1610,11 @@ int main(void) {
 	assert(malloc_strict_posix_memalign_errno == false);
 	assert(malloc_debug_stats == false);
 #endif // EXPECT_PROFILE_CHANGE
-#endif // PROFILE_DIR
 
 #if EXPECT_PASSTHROUGH
 	assert(malloc_passthrough == true);
-#else // EXPECT_PASSTHROUGH
-	assert(malloc_passthrough == false);
 #endif // EXPECT_PASSTHROUGH
+#endif // PROFILE_DIR
 #endif // !LIBC
 
 	return 0;
