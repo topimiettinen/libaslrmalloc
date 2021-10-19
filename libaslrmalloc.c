@@ -50,11 +50,13 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/auxv.h>
 #include <sys/mman.h>
 #include <sys/param.h>
 #include <sys/random.h>
 #include <unistd.h>
 
+#include "config.h"
 #if !LIBC
 // TODO assumes page size of 4096
 #define PAGE_BITS 12
@@ -599,25 +601,36 @@ static void pagetable_free(struct small_pagelist *entry) {
 	abort();
 }
 
-static void init_from_profile() {
+static void init_from_profile(const char *prefix) {
 	int r;
-	char profile_path[128];
+	char profile_path[PATH_MAX];
 	int profile_file;
 	char profile_data[2048];
 	r = snprintf(
 		profile_path,
 		sizeof(profile_path),
-#ifdef PROFILE_DIR
-		PROFILE_DIR "/%s.profile",
-#else
-		"/etc/libaslrmalloc/%s.profile",
-#endif
+		"%s/libaslrmalloc/profiles/%s.profile",
+		prefix,
 		program_invocation_short_name
 	);
 	if (r < 0 || r > sizeof(profile_path))
 		return;
-	if ((profile_file = open(profile_path, O_RDONLY)) == -1)
-		return;
+	profile_file = open(profile_path, O_RDONLY);
+	if (profile_file == -1) {
+		// Read default profile instead
+		r = snprintf(
+			     profile_path,
+			     sizeof(profile_path),
+			     "%s/libaslrmalloc/default.profile",
+			     prefix
+			     );
+		if (r < 0 || r > sizeof(profile_path))
+			return;
+		profile_file = open(profile_path, O_RDONLY);
+		if (profile_file == -1)
+			return;
+	}
+
 	r = read(profile_file, profile_data, sizeof(profile_data));
 	if (r == -1 || r == sizeof(profile_data)) {
 		close(profile_file);
@@ -649,6 +662,41 @@ static void init_from_profile() {
 			// TODO: unknown option, possible typo.
 		}
 	} while ((line = strtok_r(NULL, "\n", &saveptr)));
+}
+
+/*
+  Load a profile named `app.profile` using the name of the
+  application. The profiles are loaded from directories
+  `/usr/lib/libaslrmalloc/profiles` (distro),
+  `/etc/libaslrmalloc/profiles` (local admin), and if the program
+  isn't setuid or setgid, $XDG_CONFIG_HOME/libaslrmalloc/profiles (or
+  $HOME/.config/libaslrmalloc/profiles).
+
+  If an application specific profile doesn't exist, 'default.profile'
+  is loaded instead from the directories, but dropping path component
+  'profiles': `/usr/lib/libaslrmalloc/default.profile` and so forth.
+*/
+static void init_from_profiles(void) {
+	init_from_profile(LIBDIR);
+	init_from_profile(SYSCONFDIR);
+	if (!getauxval(AT_SECURE) &&
+	    geteuid() == getuid() && getegid() == getgid()) {
+		const char *xdg_config = getenv("XDG_CONFIG_HOME");
+		if (xdg_config)
+			init_from_profile(xdg_config);
+		else {
+			const char *home = getenv("HOME");
+			if (home) {
+				char home_config[PATH_MAX];
+				snprintf(home_config, sizeof(home_config),
+					 "%s/.config", home);
+				init_from_profile(home_config);
+			}
+		}
+	}
+#ifdef PROFILE_DIR
+	init_from_profile(PROFILE_DIR);
+#endif
 }
 
 /*
@@ -755,7 +803,7 @@ static __attribute__((constructor)) void init(void) {
 	if (state->large_hash_table == MAP_FAILED)
 		abort();
 
-	init_from_profile();
+	init_from_profiles();
 
 	if (secure_getenv("LIBASLRMALLOC_DEBUG"))
 		malloc_debug = true;

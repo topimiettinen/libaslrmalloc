@@ -103,7 +103,16 @@ if program is a symlink to firejail created by firecfg.
 Environment variables aren't used if secure execution is required (e.g. SUID programs).
 
 ## Profiles
-`libaslrmalloc` automatically loads a profile in `/etc/libaslrmalloc/` named `app.profile` using the name of the application. 
+`libaslrmalloc` automatically loads a profile named `app.profile` using the name of the application.
+The profiles are loaded from directories
+`/usr/lib/libaslrmalloc/profiles` (distro), `/etc/libaslrmalloc/profiles` (local admin),
+and if the program isn't setuid or setgid,
+$XDG_CONFIG_HOME/libaslrmalloc/profiles (or $HOME/.config/libaslrmalloc/profiles).
+
+If an application specific profile doesn't exist, 'default.profile' is
+loaded instead from the directories, but dropping path component
+'profiles': `/usr/lib/libaslrmalloc/default.profile` and so forth.
+
 The settings in the profile are same as with the environment variables but without the prefix and lowercase, for example:
 
 ```

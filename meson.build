@@ -7,6 +7,16 @@ project('libaslrmalloc',
   license: ['LGPL-2.1-or-later', 'BSD-3-Clause'],
 )
 
+conf = configuration_data()
+prefixdir = get_option('prefix')
+libdir = prefixdir / 'lib'
+sysconfdir = prefixdir / get_option('sysconfdir')
+conf.set_quoted('LIBDIR', libdir)
+conf.set_quoted('SYSCONFDIR', sysconfdir)
+config_h = configure_file(
+  output : 'config.h',
+  configuration : conf)
+
 add_project_arguments('-fno-builtin', language: 'c')
 add_project_link_arguments('-ldl', language: 'c')
 
@@ -23,7 +33,7 @@ libaslrmalloc = shared_library('aslrmalloc',
 #
 
 # Change this to project_source_root when we upgrade to meson 0.56 or higher
-test_profile_dir = meson.source_root() / 'tests/profiles'
+test_profile_dir = meson.source_root() / 'tests'
 test_1 = executable('test_1',
   'libaslrmalloc.c',
   c_args: ['-DDEBUG', '-DPROFILE_DIR="@0@"'.format(test_profile_dir), '-DEXPECT_PROFILE_CHANGE'],
