@@ -479,7 +479,7 @@ static void pagetables_dump(const char *label) {
   Calculate a hash value from address for indexing
   512 (sizeof(void *) / PAGE_SIZE) pointers in a page.
 */
-unsigned int malloc_hash(void *ptr) {
+static unsigned int malloc_hash(void *ptr) {
 	unsigned int r = 0;
 	unsigned long addr = (unsigned long)ptr >> PAGE_BITS;
 	// Folding hash of 9 bits
