@@ -652,6 +652,18 @@ static void init_from_profile() {
 }
 
 /*
+  dlsym() calls calloc(), so let's use a temporary version.
+*/
+static void *temp_calloc(size_t nmemb, size_t size) {
+	static char buf[256];
+	static int bufidx;
+	void *ret = &buf[bufidx];
+	bufidx += size;
+	assert(bufidx < sizeof(buf));
+	return ret;
+}
+
+/*
   Initialization of the global state.
 
   We need to allocate at least
@@ -765,10 +777,11 @@ static __attribute__((constructor)) void init(void) {
 		malloc_debug_stats = true;
 
 	if (malloc_passthrough) {
+		libc_calloc = temp_calloc;
+		libc_calloc = dlsym(RTLD_NEXT, "calloc");
 		libc_malloc = dlsym(RTLD_NEXT, "malloc");
 		libc_malloc_usable_size = dlsym(RTLD_NEXT, "malloc_usable_size");
 		libc_free = dlsym(RTLD_NEXT, "free");
-		libc_calloc = dlsym(RTLD_NEXT, "calloc");
 		libc_realloc = dlsym(RTLD_NEXT, "realloc");
 		libc_reallocarray = dlsym(RTLD_NEXT, "reallocarray");
 		libc_posix_memalign = dlsym(RTLD_NEXT, "posix_memalign");
