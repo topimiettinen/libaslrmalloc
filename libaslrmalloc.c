@@ -601,6 +601,34 @@ static void pagetable_free(struct small_pagelist *entry) {
 	abort();
 }
 
+static void is_yes(const char *str, bool *ret) {
+	if (strcmp(str, "1") == 0 ||
+	    strcmp(str, "y") == 0 ||
+	    strcmp(str, "yes") == 0 ||
+	    strcmp(str, "true") == 0) {
+		*ret = true;
+		DPRINTF("checking y/n for '%s' -> true\n", str);
+	} else if (strcmp(str, "0") == 0 ||
+		   strcmp(str, "n") == 0 ||
+		   strcmp(str, "no") == 0 ||
+		   strcmp(str, "false") == 0) {
+		*ret = false;
+		DPRINTF("checking y/n for '%s' -> false\n", str);
+	}
+}
+
+// Macro because of sizeof(str)
+#define CHECK_OPTION(line, str, ptr)					\
+	if (strncmp(line, str, sizeof(str) - 1) == 0) 			\
+		is_yes(&line[sizeof(str) - 1], ptr)
+
+static void check_env(const char *name, bool *ret) {
+	char *value = secure_getenv(name);
+	DPRINTF("checking env %s: '%s'\n", name, value);
+	if (value)
+		is_yes(value, ret);
+}
+
 static void init_from_profile(const char *prefix) {
 	int r;
 	char profile_path[PATH_MAX];
@@ -644,23 +672,18 @@ static void init_from_profile(const char *prefix) {
 	if (NULL == line)
 		return;
 	do {
-		if (*line == '#') {
+		DPRINTF("checking profile line %s\n", line);
+		if (*line == '#')
 			continue;
-		} else if (strcmp(line, "debug") == 0) {
-			malloc_debug = true;
-		} else if (strcmp(line, "passthrough") == 0) {
-			malloc_passthrough = true;
-		} else if (strncmp(line, "fill_junk=", 10) == 0) {
-			malloc_fill_junk = line[10];
-		} else if (strcmp(line, "strict_malloc0") == 0) {
-			malloc_strict_malloc0 = true;
-		} else if (strcmp(line, "strict_posix_memalign_errno") == 0) {
-			malloc_strict_posix_memalign_errno = true;
-		} else if (strcmp(line, "stats") == 0) {
-			malloc_debug_stats = true;
-		} else {
-			// TODO: unknown option, possible typo.
-		}
+		else CHECK_OPTION(line, "debug=", &malloc_debug);
+		else CHECK_OPTION(line, "passthrough=", &malloc_passthrough);
+		else CHECK_OPTION(line, "stats=", &malloc_debug_stats);
+		else CHECK_OPTION(line, "strict_malloc0=", &malloc_strict_malloc0);
+		else CHECK_OPTION(line, "strict_posix_memalign_errno=",
+				  &malloc_strict_posix_memalign_errno);
+		else if (strncmp(line, "fill_junk=", sizeof("fill_junk=") - 1) == 0)
+			malloc_fill_junk = line[sizeof("fill_junk=") - 1];
+
 	} while ((line = strtok_r(NULL, "\n", &saveptr)));
 }
 
@@ -805,24 +828,17 @@ static __attribute__((constructor)) void init(void) {
 
 	init_from_profiles();
 
-	if (secure_getenv("LIBASLRMALLOC_DEBUG"))
-		malloc_debug = true;
-
-	if (secure_getenv("LIBASLRMALLOC_PASSTHROUGH"))
-		malloc_passthrough = true;
+	check_env("LIBASLRMALLOC_DEBUG", &malloc_debug);
+	check_env("LIBASLRMALLOC_PASSTHROUGH", &malloc_passthrough);
+	check_env("LIBASLRMALLOC_STATS", &malloc_debug_stats);
+	check_env("LIBASLRMALLOC_STRICT_MALLOC0", &malloc_strict_malloc0);
+	check_env("LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO",
+		  &malloc_strict_posix_memalign_errno);
 
 	char *junk = secure_getenv("LIBASLRMALLOC_FILL_JUNK");
 	if (junk)
 		malloc_fill_junk = *junk;
 
-	if (secure_getenv("LIBASLRMALLOC_STRICT_MALLOC0"))
-		malloc_strict_malloc0 = true;
-
-	if (secure_getenv("LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO"))
-		malloc_strict_posix_memalign_errno = true;
-
-	if (secure_getenv("LIBASLRMALLOC_STATS"))
-		malloc_debug_stats = true;
 
 	if (malloc_passthrough) {
 		libc_calloc = temp_calloc;

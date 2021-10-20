@@ -41,9 +41,9 @@ test_1 = executable('test_1',
 test('test_1', test_1, env: [
   'LIBASLRMALLOC_DEBUG=1',
   'LIBASLRMALLOC_FILL_JUNK=X',
-  'LIBASLRMALLOC_STRICT_MALLOC0=1',
-  'LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO=1',
-  'LIBASLRMALLOC_STATS=1',
+  'LIBASLRMALLOC_STATS=y',
+  'LIBASLRMALLOC_STRICT_MALLOC0=yes',
+  'LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO=true',
   ]
 )
 test('test_1_b', test_1, env: [
@@ -96,4 +96,10 @@ test_8 = executable('test_8',
   c_args: ['-DDEBUG', '-DROUNDS1=1', '-DROUNDS2=1', '-DEXPECT_PASSTHROUGH',
   '-DPROFILE_DIR="@0@"'.format(test_profile_dir)],
 )
-test('test_8', test_8)
+test('test_8', test_8, env: [
+  'LIBASLRMALLOC_DEBUG=0',
+  'LIBASLRMALLOC_STATS=n',
+  'LIBASLRMALLOC_STRICT_MALLOC0=no',
+  'LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO=false',
+  ]
+)

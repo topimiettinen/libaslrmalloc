@@ -93,12 +93,16 @@ if program is a symlink to firejail created by firecfg.
 
 `libaslrmalloc` understands the following environment variables:
 
-- `LIBASLRMALLOC_DEBUG`: Enable debugging.
-- `LIBASLRMALLOC_PASSTHROUGH`: Forward function calls to the libc implementations.
-- `LIBASLRMALLOC_FILL_JUNK`: Can be used to change the fill character or to disable filling if set to an empty string.
-- `LIBASLRMALLOC_STRICT_MALLOC0`: If set to 1, `malloc(0)` will return `NULL`.
-- `LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO`: If set to 1, `posix_memalign()` will restore the old errno in case of an error.
-- `LIBASLRMALLOC_STATS`: Enable stats.
+- `LIBASLRMALLOC_DEBUG`: Boolean: Enable debugging.
+- `LIBASLRMALLOC_FILL_JUNK`: Character: Can be used to change the fill character or to disable filling if set to an empty string.
+- `LIBASLRMALLOC_PASSTHROUGH`: Boolean: Forward function calls to the libc implementations.
+- `LIBASLRMALLOC_STATS`: Boolean: Enable statistics.
+- `LIBASLRMALLOC_STRICT_MALLOC0`: Boolean: `malloc(0)` will return `NULL`.
+- `LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO`: Boolean: `posix_memalign()` will restore the old errno in case of an error.
+
+The value of boolean variables should be one of `1`, `y`, `yes` or
+`true` for enabling a feature, or `0`, `n`, `no` or `false` to disable
+it.
 
 Environment variables aren't used if secure execution is required (e.g. SUID programs).
 
@@ -116,17 +120,17 @@ loaded instead from the directories, but dropping path component
 The settings in the profile are same as with the environment variables but without the prefix and lowercase, for example:
 
 ```
-debug
+debug=1
 fill_junk=X
-strict_malloc0
-strict_posix_memalign_errno
-stats
+stats=y
+strict_malloc0=yes
+strict_posix_memalign_errno=true
 ```
 
 or
 
 ```
-passthrough
+passthrough=true
 ```
 
 ## Examples
