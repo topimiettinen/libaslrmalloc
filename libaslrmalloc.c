@@ -175,6 +175,12 @@ static void *(*libc_pvalloc)(size_t);
 		}                                                     \
 	} while (0)
 
+#if DEBUG_BITMAPS
+#define DPRINTF_BM DPRINTF
+#else
+#define DPRINTF_BM(format, ...) do { } while (0)
+#endif
+
 // TODO Maybe the guard pages could be even larger than one page, for
 // example fill the entire 2MB page table entry, especially for large
 // allocations. If they hold a small number of large items (as opposed
@@ -329,8 +335,8 @@ static unsigned int scramble_index(unsigned int index, unsigned int max,
 				   unsigned long access_randomizer_state) {
 	assert(max > 0);
 	unsigned int ret = (index + access_randomizer_state) % max;
-	DPRINTF("scrambled %u -> %u (max %u state %lx)\n", index, ret, max,
-		access_randomizer_state);
+	DPRINTF_BM("scrambled %u -> %u (max %u state %lx)\n", index, ret, max,
+		   access_randomizer_state);
 	return ret;
 }
 
@@ -341,8 +347,8 @@ static unsigned int scramble_index(unsigned int index, unsigned int max,
 static int bitmap_find_clear(const unsigned long *bitmap,
 			     unsigned int bitmap_bits,
 			     unsigned long access_randomizer_state) {
-	DPRINTF("bitmap_bits %u (%u words)\n", bitmap_bits,
-		bitmap_bits >> ULONG_BITS);
+	DPRINTF_BM("bitmap_bits %u (%u words)\n", bitmap_bits,
+		   bitmap_bits >> ULONG_BITS);
 
 	for (unsigned int bit = 0; bit < bitmap_bits; bit++) {
 		unsigned int scrambled_bit = scramble_index(
@@ -357,16 +363,16 @@ static int bitmap_find_clear(const unsigned long *bitmap,
 				1;
 		unsigned long word = bitmap[word_index] & mask;
 
-		DPRINTF("checking index %u+%u word %lx mask %lx bit %d "
-			"(original %d) bits left %d\n",
-			word_index, bit_index, word, mask, scrambled_bit, bit,
-			bitmap_bits - scrambled_bit);
+		DPRINTF_BM("checking index %u+%u word %lx mask %lx bit %d "
+			   "(original %d) bits left %d\n",
+			   word_index, bit_index, word, mask, scrambled_bit, bit,
+			   bitmap_bits - scrambled_bit);
 		if ((word & (1UL << bit_index)) == 0) {
-			DPRINTF("returning %d\n", scrambled_bit);
+			DPRINTF_BM("returning %d\n", scrambled_bit);
 			return scrambled_bit;
 		}
 	}
-	DPRINTF("returning -1\n");
+	DPRINTF_BM("returning -1\n");
 	return -1;
 }
 
@@ -376,7 +382,7 @@ static int bitmap_find_clear(const unsigned long *bitmap,
 */
 static bool bitmap_is_empty(const unsigned long *bitmap,
 			    unsigned int bitmap_bits) {
-	DPRINTF("bitmap_bits %u (%u words)\n", bitmap_bits,
+	DPRINTF_BM("bitmap_bits %u (%u words)\n", bitmap_bits,
 		bitmap_bits >> ULONG_BITS);
 
 	for (unsigned int b = 0; b < bitmap_bits; b += 1 << ULONG_BITS) {
@@ -387,14 +393,14 @@ static bool bitmap_is_empty(const unsigned long *bitmap,
 			mask = (1UL << (bitmap_bits - b)) - 1;
 		unsigned long word = bitmap[i] & mask;
 
-		DPRINTF("checking index %u word %lx mask %lx bits left %d\n", i,
+		DPRINTF_BM("checking index %u word %lx mask %lx bits left %d\n", i,
 			word, mask, bitmap_bits - b);
 		if (word != 0) {
-			DPRINTF("returning false\n");
+			DPRINTF_BM("returning false\n");
 			return false;
 		}
 	}
-	DPRINTF("returning true\n");
+	DPRINTF_BM("returning true\n");
 	return true;
 }
 
@@ -986,7 +992,6 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 		ret = (void *)((unsigned long)new->page + page_offset);
 	} else {
 		// New small allocation
-		pagetables_dump("pre malloc");
 		real_size = 1 << (index + MIN_ALLOC_BITS);
 
 		// TODO separate mutexes for each slab class and page table
@@ -1125,7 +1130,6 @@ size_t malloc_usable_size(void *ptr) {
 		init();
 
 	DPRINTF("malloc_usable_size(%p)\n", ptr);
-	pagetables_dump("malloc_usable_size");
 	unsigned long address = (unsigned long)ptr;
 	unsigned long page_address = address & PAGE_MASK;
 	unsigned int hash = malloc_hash((void *)page_address);
@@ -1194,7 +1198,6 @@ void free(void *ptr) {
 		init();
 
 	DPRINTF("free(%p)\n", ptr);
-	pagetables_dump("pre free");
 	unsigned long address = (unsigned long)ptr;
 	unsigned long page_address = address & PAGE_MASK;
 	unsigned int hash = malloc_hash((void *)page_address);
