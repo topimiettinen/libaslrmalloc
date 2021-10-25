@@ -417,7 +417,7 @@ static void *ptr_to_offset_in_page(void *page, unsigned int size_index, int num)
   Dump all pagetables for debugging.
 */
 static void pagetables_dump(const char *label) {
-	if (!malloc_debug)
+	if (!malloc_debug || malloc_passthrough)
 		return;
 
 	unsigned int count;
@@ -751,6 +751,54 @@ static __attribute__((constructor)) void init(void) {
 		return;
 
 	int saved_errno = errno;
+
+	init_from_profiles();
+
+	check_env("LIBASLRMALLOC_DEBUG", &malloc_debug);
+	check_env("LIBASLRMALLOC_PASSTHROUGH", &malloc_passthrough);
+	check_env("LIBASLRMALLOC_STATS", &malloc_debug_stats);
+	check_env("LIBASLRMALLOC_STRICT_MALLOC0", &malloc_strict_malloc0);
+	check_env("LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO",
+		  &malloc_strict_posix_memalign_errno);
+
+	char *junk = secure_getenv("LIBASLRMALLOC_FILL_JUNK");
+	if (junk)
+		malloc_fill_junk = *junk;
+
+	if (malloc_passthrough) {
+		libc_calloc = temp_calloc;
+		libc_calloc = dlsym(RTLD_NEXT, "calloc");
+		libc_malloc = dlsym(RTLD_NEXT, "malloc");
+		libc_malloc_usable_size = dlsym(RTLD_NEXT, "malloc_usable_size");
+		libc_free = dlsym(RTLD_NEXT, "free");
+		libc_realloc = dlsym(RTLD_NEXT, "realloc");
+		libc_reallocarray = dlsym(RTLD_NEXT, "reallocarray");
+		libc_posix_memalign = dlsym(RTLD_NEXT, "posix_memalign");
+		libc_aligned_alloc = dlsym(RTLD_NEXT, "aligned_alloc");
+		libc_memalign = dlsym(RTLD_NEXT, "memalign");
+		libc_valloc = dlsym(RTLD_NEXT, "valloc");
+		libc_pvalloc = dlsym(RTLD_NEXT, "pvalloc");
+
+		if (
+			libc_malloc == NULL
+			|| libc_malloc_usable_size == NULL
+			|| libc_free == NULL
+			|| libc_calloc == NULL
+			|| libc_realloc == NULL
+			|| libc_reallocarray == NULL
+			|| libc_posix_memalign == NULL
+			|| libc_aligned_alloc == NULL
+			|| libc_memalign == NULL
+			|| libc_valloc == NULL
+			|| libc_pvalloc == NULL
+		)
+			abort();
+
+		state = (void *) -1L;
+		errno = saved_errno;
+		return;
+	}
+
 	/*
 	   Get number of virtual address bits with CPUID
 	   instruction. There are lots of different values from 36 to
@@ -826,50 +874,6 @@ static __attribute__((constructor)) void init(void) {
 	if (state->large_hash_table == MAP_FAILED)
 		abort();
 
-	init_from_profiles();
-
-	check_env("LIBASLRMALLOC_DEBUG", &malloc_debug);
-	check_env("LIBASLRMALLOC_PASSTHROUGH", &malloc_passthrough);
-	check_env("LIBASLRMALLOC_STATS", &malloc_debug_stats);
-	check_env("LIBASLRMALLOC_STRICT_MALLOC0", &malloc_strict_malloc0);
-	check_env("LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO",
-		  &malloc_strict_posix_memalign_errno);
-
-	char *junk = secure_getenv("LIBASLRMALLOC_FILL_JUNK");
-	if (junk)
-		malloc_fill_junk = *junk;
-
-
-	if (malloc_passthrough) {
-		libc_calloc = temp_calloc;
-		libc_calloc = dlsym(RTLD_NEXT, "calloc");
-		libc_malloc = dlsym(RTLD_NEXT, "malloc");
-		libc_malloc_usable_size = dlsym(RTLD_NEXT, "malloc_usable_size");
-		libc_free = dlsym(RTLD_NEXT, "free");
-		libc_realloc = dlsym(RTLD_NEXT, "realloc");
-		libc_reallocarray = dlsym(RTLD_NEXT, "reallocarray");
-		libc_posix_memalign = dlsym(RTLD_NEXT, "posix_memalign");
-		libc_aligned_alloc = dlsym(RTLD_NEXT, "aligned_alloc");
-		libc_memalign = dlsym(RTLD_NEXT, "memalign");
-		libc_valloc = dlsym(RTLD_NEXT, "valloc");
-		libc_pvalloc = dlsym(RTLD_NEXT, "pvalloc");
-
-		if (
-			libc_malloc == NULL
-			|| libc_malloc_usable_size == NULL
-			|| libc_free == NULL
-			|| libc_calloc == NULL
-			|| libc_realloc == NULL
-			|| libc_reallocarray == NULL
-			|| libc_posix_memalign == NULL
-			|| libc_aligned_alloc == NULL
-			|| libc_memalign == NULL
-			|| libc_valloc == NULL
-			|| libc_pvalloc == NULL
-		)
-			abort();
-	}
-
 	DPRINTF("%d VA space bits, mask %16.16lx, getrandom() bytes %d\n",
 		malloc_user_va_space_bits, malloc_random_address_mask,
 		malloc_getrandom_bytes);
@@ -883,6 +887,9 @@ static __attribute__((destructor)) void fini(void) {
 		DPRINTF("destructor called before constructor\n");
 		return;
 	}
+
+	if (!malloc_debug || malloc_passthrough)
+		return;
 
 	if (malloc_debug_stats) {
 		pagetables_dump("final");
