@@ -87,48 +87,77 @@
 // Worst case: one bit for each smallest item (MIN_ALLOC_SIZE) per page
 #define BITMAP_ULONGS (PAGE_SIZE / MIN_ALLOC_SIZE / ULONG_SIZE)
 
-// TODO use hash tables or modern tree structures to speed up free()
-// without weakening ASLR?
-
 /*
   small_pagelist is used for allocating small (16 ... 2048) byte
-  slabs and also page tables for internal use. Fields prev and
-  hash_next are not used for page tables.
+  slabs.
 */
 struct small_pagelist {
-	struct small_pagelist *next, *prev;
-	struct small_pagelist *hash_next;
-	void *page;
+	void *page; // Must be first
+	unsigned int index;
 	unsigned long bitmap[BITMAP_ULONGS];
 	unsigned long access_randomizer_state;
+};
+
+/*
+  internal_pagelist is used for allocating page tables for internal
+  use.
+*/
+// TODO Internal page tables could also use multi level page table
+// approach to speed up `pagetable_free()`.
+struct internal_pagelist {
+	struct small_pagelist s; // page must be first
+	struct internal_pagelist *next, *prev;
 };
 
 /*
   large_pagelist is used for allocating multiples of page size blocks.
 */
 struct large_pagelist {
-	struct large_pagelist *next, *prev;
-	struct large_pagelist *hash_next;
-	void *page;
+	void *page; // Must be first
 	size_t size;
+};
+
+/*
+  Each middle table contains MID_PAGE_SIZE number of pointers to small
+  or large pagelists, or further middle tables. The table is indexed
+  by bits of the address (like CPU page tables) and the type of an
+  entry is identified by low bits of the address. Leaf entries can
+  exist at any level.
+ */
+#define MIDDLE_PAGE_BITS 6
+#define MIDDLE_PAGE_SIZE (1UL << MIDDLE_PAGE_BITS)
+#define MIDDLE_PAGE_MASK (~(MIDDLE_PAGE_SIZE - 1))
+
+#define MIDDLE_PAGE_TYPE_MASK ~3UL
+#define MIDDLE_PAGE_TYPE_MIDDLE 0
+#define MIDDLE_PAGE_TYPE_SMALL 1
+#define MIDDLE_PAGE_TYPE_LARGE 2
+
+union pagelist;
+struct middle_page_table {
+	union pagelist *table[MIDDLE_PAGE_SIZE];
+};
+
+union pagelist {
+	struct middle_page_table m;
+	struct small_pagelist s;
+	struct large_pagelist l;
 };
 
 /*
   Global state for the library.
 */
 struct malloc_state {
-	// b16, b32, b64, b128, b256, b512, b1024, b2048;
-	struct small_pagelist *pagetables;
-	struct small_pagelist *small_pages[MAX_SIZE_CLASSES];
-	struct large_pagelist *large_pages;
-	struct small_pagelist **small_hash_tables[MAX_SIZE_CLASSES];
-	struct large_pagelist **large_hash_table;
+	struct internal_pagelist *pagetables;
+	struct internal_pagelist *middle_pagetables;
+	union pagelist *small_pages[MAX_SIZE_CLASSES];
+	union pagelist *large_pages;
+	union pagelist *all_pages;
 	unsigned long small_count[MAX_SIZE_CLASSES];
 	unsigned long large_count;
 };
 static struct malloc_state *state;
 
-// TODO replace global lock with a lock for each list?
 static pthread_mutex_t malloc_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned long malloc_random_address_mask;
 static int malloc_getrandom_bytes;
@@ -153,6 +182,11 @@ static void *(*libc_aligned_alloc)(size_t, size_t);
 static void *(*libc_memalign)(size_t, size_t);
 static void *(*libc_valloc)(size_t);
 static void *(*libc_pvalloc)(size_t);
+
+static union pagelist *pagetable_new(struct internal_pagelist **pagetable,
+				     size_t size);
+static void pagetable_free(struct internal_pagelist **pagetable,
+			   union pagelist *entry);
 
 #define DPRINTF(format, ...)                                                 \
 	do {                                                                 \
@@ -447,6 +481,272 @@ static void *ptr_to_offset_in_page(void *page, unsigned int size_index, int num)
 }
 
 /*
+  Dump one table entry.
+*/
+static void middle_table_dump(const union pagelist *midptr, const char *label,
+			      int search_bits, unsigned long addr) {
+	if (!midptr)
+		return;
+
+	assert(search_bits >= MIN_ALLOC_BITS);
+
+	switch ((unsigned long)midptr & ~MIDDLE_PAGE_TYPE_MASK) {
+	case MIDDLE_PAGE_TYPE_MIDDLE:
+		unsigned int count = 0;
+		for (unsigned int i = 0; i < MIDDLE_PAGE_SIZE; i++)
+			if (midptr->m.table[i]) {
+				count++;
+				unsigned long lower_addr = addr |
+					(unsigned long)i <<
+					(search_bits - MIDDLE_PAGE_BITS);
+				DPRINTF("%s: middle page %p [%u] (0x%lx): %p\n",
+					label, &midptr->m.table[i], i, lower_addr,
+					midptr->m.table[i]);
+				middle_table_dump(midptr->m.table[i], label,
+						  search_bits - MIDDLE_PAGE_BITS,
+						  lower_addr);
+			}
+		assert(count != 0);
+		break;
+	case MIDDLE_PAGE_TYPE_SMALL: {
+		const struct small_pagelist *p = (const struct small_pagelist *)
+			((unsigned long)midptr & MIDDLE_PAGE_TYPE_MASK);
+		DPRINTF("%s: small page (%p) .page=%p .index=%u .rnd=%lx bm=",
+			label, p, p->page, p->index,
+			p->access_randomizer_state);
+		for (unsigned int i = 0; i < BITMAP_ULONGS; i++)
+			DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
+		DPRINTF_NOPREFIX("\n");
+		break;
+	}
+	case MIDDLE_PAGE_TYPE_LARGE: {
+		const struct large_pagelist *p = (const struct large_pagelist *)
+			((unsigned long)midptr & MIDDLE_PAGE_TYPE_MASK);
+		DPRINTF("%s: large page (%p) .page=%p .size=%lx\n", label,
+			p, p->page, p->size);
+		break;
+	}
+	}
+}
+
+/*
+  Insert an entry into table based on the related address.
+*/
+static void middle_table_insert(union pagelist **midptr, union pagelist *entry,
+				void *ptr, int search_bits, int type) {
+	assert(midptr);
+	assert(search_bits >= MIN_ALLOC_BITS);
+
+	if (!*midptr) {
+		*midptr = (void*)((unsigned long)entry | type);
+		DPRINTF("Replaced NULL entry at %p with %p\n",
+			midptr, *midptr);
+		return;
+	}
+
+	int old_type = (unsigned long)*midptr & ~MIDDLE_PAGE_TYPE_MASK;
+	switch (old_type) {
+	case MIDDLE_PAGE_TYPE_MIDDLE: {
+		unsigned int i = ((unsigned long)ptr >>
+				  (search_bits - MIDDLE_PAGE_BITS))
+			& ~MIDDLE_PAGE_MASK;
+		DPRINTF("Recursing into middle page %p [%u]\n",
+			*midptr, i);
+		middle_table_insert(&((*midptr)->m.table[i]), entry, ptr,
+				    search_bits - MIDDLE_PAGE_BITS, type);
+		break;
+	}
+	case MIDDLE_PAGE_TYPE_SMALL:
+	case MIDDLE_PAGE_TYPE_LARGE: {
+		// Need to insert a new middle page
+		union pagelist *new = pagetable_new(&state->middle_pagetables,
+						    sizeof(struct middle_page_table));
+		union pagelist *old = (union pagelist *)((unsigned long)*midptr &
+							 MIDDLE_PAGE_TYPE_MASK);
+		memset(new, 0, sizeof(struct middle_page_table));
+		*midptr = new;
+		DPRINTF("Replacing existing middle page %p (.page %p) with %p (.page %p)\n",
+			old, old->s.page, new, ptr);
+		middle_table_insert(midptr, old, old->s.page, search_bits, old_type);
+		middle_table_insert(midptr, entry, ptr, search_bits, type);
+		break;
+	}
+	}
+}
+
+/*
+  Delete an entry from a table based on the related address.
+*/
+static void middle_table_delete(union pagelist **midptr, unsigned long address,
+				int search_bits) {
+	assert(midptr);
+	assert(search_bits >= MIN_ALLOC_BITS);
+
+	DPRINTF("Delete checking middle page %p from %p address %lx search_bits %d\n",
+		*midptr, midptr, address, search_bits);
+
+	if (!*midptr)
+		return;
+
+	int type = (unsigned long)*midptr & ~MIDDLE_PAGE_TYPE_MASK;
+	switch (type) {
+	case MIDDLE_PAGE_TYPE_MIDDLE: {
+		unsigned int i = (address >> (search_bits - MIDDLE_PAGE_BITS))
+			& ~MIDDLE_PAGE_MASK;
+		DPRINTF("Delete recursing into middle page %p [%u]\n",
+			*midptr, i);
+		middle_table_delete(&((*midptr)->m.table[i]), address,
+				    search_bits - MIDDLE_PAGE_BITS);
+
+		unsigned int count = 0;
+		union pagelist *found = NULL;
+		for (i = 0; i < MIDDLE_PAGE_SIZE; i++)
+			if ((*midptr)->m.table[i]) {
+				count++;
+				found = (*midptr)->m.table[i];
+			}
+
+		if (count > 1) {
+			DPRINTF("Middle page %p still has %u entries\n",
+			        *midptr, count);
+			return;
+		}
+		if (count == 1) {
+			DPRINTF("Replacing middle page %p with %p\n",
+			        *midptr, found);
+			pagetable_free(&state->middle_pagetables, *midptr);
+			*midptr = found;
+			return;
+		}
+		// All empty, let's delete the middle table
+		DPRINTF("Freeing page table %p\n", *midptr);
+		pagetable_free(&state->middle_pagetables, *midptr);
+		break;
+	}
+	case MIDDLE_PAGE_TYPE_SMALL:
+	case MIDDLE_PAGE_TYPE_LARGE: {
+		DPRINTF("Setting middle page %p to NULL\n", *midptr);
+		*midptr = NULL;
+		break;
+	}
+	}
+}
+
+/*
+  Find an entry in the table based on the related address.
+*/
+static union pagelist **middle_table_find(union pagelist **midptr,
+					  unsigned long address,
+					  int search_bits) {
+	assert(midptr);
+	DPRINTF("Finding at %p address %lx\n",
+		*midptr, address & ~((1 << search_bits) - 1));
+	if (!*midptr || search_bits < MIDDLE_PAGE_BITS) {
+		DPRINTF("Middle page %p is NULL or ran out of search bits %d\n",
+			*midptr, search_bits);
+		return NULL;
+	}
+
+	switch ((unsigned long)*midptr & ~MIDDLE_PAGE_TYPE_MASK) {
+	case MIDDLE_PAGE_TYPE_MIDDLE: {
+		unsigned int i = (address >> (search_bits - MIDDLE_PAGE_BITS))
+			& ~MIDDLE_PAGE_MASK;
+		DPRINTF("Trying middle page %p [%u] with new search bits %d\n",
+			&((*midptr)->m.table[i]), i, search_bits - MIDDLE_PAGE_BITS);
+		return middle_table_find(&((*midptr)->m.table[i]), address,
+					 search_bits - MIDDLE_PAGE_BITS);
+	}
+	case MIDDLE_PAGE_TYPE_SMALL:
+	case MIDDLE_PAGE_TYPE_LARGE: {
+		DPRINTF("Found middle page %p with search bits %d\n",
+			*midptr, search_bits);
+		return midptr;
+	}
+	}
+	return NULL;
+}
+
+/*
+  Return true to stop iterating.
+*/
+typedef bool (middle_table_iterator_fn)(union pagelist *entry, void *data);
+
+/*
+  Iterate the non-empty entries of a table using callback.
+*/
+static bool middle_table_iterate(union pagelist *midptr,
+				 middle_table_iterator_fn *cb, void *data) {
+	if (!midptr)
+		return false;
+
+	switch ((unsigned long)midptr & ~MIDDLE_PAGE_TYPE_MASK) {
+	case MIDDLE_PAGE_TYPE_MIDDLE:
+		for (unsigned int i = 0; i < MIDDLE_PAGE_SIZE; i++)
+			if (midptr->m.table[i])
+				if (middle_table_iterate(midptr->m.table[i], cb, data))
+					return true;
+		break;
+	case MIDDLE_PAGE_TYPE_SMALL:
+	case MIDDLE_PAGE_TYPE_LARGE: {
+		union pagelist *p = (union pagelist *)
+			((unsigned long)midptr & MIDDLE_PAGE_TYPE_MASK);
+		return (cb(p, data));
+	}
+	}
+	return false;
+}
+
+struct small_page_find_cb_data {
+	/* in */
+	const unsigned int index;
+	const unsigned long extra_mask;
+	const size_t size;
+	const size_t real_size;
+	/* out */
+	void *alloc_start, *ret;
+};
+
+/*
+  Callback for allocating small pages.
+*/
+static bool small_page_find_cb(union pagelist *p, void *data) {
+	struct small_page_find_cb_data *s = data;
+
+	if ((unsigned long)p->s.page & ~s->extra_mask)
+		return false;
+
+	int offset = bitmap_find_clear(p->s.bitmap, bitmap_bits(s->real_size),
+				       p->s.access_randomizer_state);
+	if (offset < 0)
+		return false;
+
+	DPRINTF("found offset %d ptr %p index %u (want %u)\n",
+		offset, p->s.page, p->s.index, s->index);
+	assert(p->s.index == s->index);
+
+	void *ret = ptr_to_offset_in_page(p->s.page, s->index, offset);
+
+	bitmap_set(p->s.bitmap, offset);
+	/*
+	  Randomize start of for example 1600 byte allocation with 32
+	  byte alignment in a 2048 byte slab
+	*/
+	unsigned int align_bits = __builtin_ctzl(s->extra_mask & MIN_ALLOC_MASK);
+	unsigned long page_offset = 0;
+	if (align_bits < (s->index + MIN_ALLOC_BITS)) {
+		unsigned long slack = (s->real_size - s->size) >> align_bits;
+		if (slack) {
+			page_offset = randomize_int(0, slack) << align_bits;
+			DPRINTF("randomized %p with offset %lu (%lu positions, %d bits)\n",
+				ret, page_offset, slack, align_bits);
+		}
+	}
+	s->alloc_start = ret;
+	s->ret = (void *)((unsigned long)ret + page_offset);
+	return true;
+}
+
+/*
   Dump all pagetables for debugging.
 */
 static void pagetables_dump(const char *label) {
@@ -454,96 +754,56 @@ static void pagetables_dump(const char *label) {
 		return;
 
 	unsigned int count;
-	struct small_pagelist *p;
+	struct internal_pagelist *p;
 	for (p = state->pagetables, count = 0; p; p = p->next, count++) {
-		DPRINTF("%s: pagetables (%p) [%u] .page=%p rnd=%lx bm=", label,
-			p, count, p->page, p->access_randomizer_state);
+		DPRINTF("%s: pagetables (%p) [%u] .page=%p .index=%u rnd=%lx bm=",
+			label, p, count, p->s.page, p->s.index,
+			p->s.access_randomizer_state);
 		for (int i = 0; i < BITMAP_ULONGS; i++)
-			DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
+			DPRINTF_NOPREFIX("%lx ", p->s.bitmap[i]);
 		DPRINTF_NOPREFIX("\n");
 	}
 
-	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
-		count = 0;
-		for (p = state->small_pages[i]; p; p = p->next, count++) {
-			DPRINTF("%s: small_pages[%u] (%p) [%u] .page=%p "
-				".rnd=%lx bm=",
-				label, i, p, count, p->page,
-				p->access_randomizer_state);
-			for (int i = 0; i < BITMAP_ULONGS; i++)
-				DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
-			DPRINTF_NOPREFIX("\n");
-		}
+	for (p = state->middle_pagetables, count = 0; p; p = p->next, count++) {
+		DPRINTF("%s: middle_pagetables (%p) [%u] .page=%p .index=%u rnd=%lx bm=",
+			label, p, count, p->s.page, p->s.index,
+			p->s.access_randomizer_state);
+		for (int i = 0; i < BITMAP_ULONGS; i++)
+			DPRINTF_NOPREFIX("%lx ", p->s.bitmap[i]);
+		DPRINTF_NOPREFIX("\n");
 	}
 
-	count = 0;
-	for (struct large_pagelist *p = state->large_pages; p;
-	     p = p->next, count++)
-		DPRINTF("%s: large_pages (%p) [%u] .page=%p .size=%lx\n", label,
-			p, count, p->page, p->size);
-
+	DPRINTF("small_pages\n");
 	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++)
-		for (unsigned int j = 0; j < PAGE_SIZE / sizeof(void *); j++) {
-			if (state->small_hash_tables[i][j]) {
-				count = 0;
-				for (p = state->small_hash_tables[i][j]; p; p = p->next, count++) {
-					DPRINTF("%s: small_hash_tables[%u][%u] (%p) [%u] .page=%p "
-						".rnd=%lx bm=",
-						label, i, j, p, count, p->page,
-						p->access_randomizer_state);
-					for (int i = 0; i < BITMAP_ULONGS; i++)
-						DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
-					DPRINTF_NOPREFIX("\n");
-				}
-			}
-		}
+		middle_table_dump(state->small_pages[i], label,
+				  malloc_user_va_space_bits, 0);
 
-	for (unsigned int i = 0; i < PAGE_SIZE / sizeof(void *); i++) {
-		if (state->large_hash_table[i]) {
-			count = 0;
-			for (struct large_pagelist *p = state->large_hash_table[i]; p;
-			     p = p->hash_next, count++) {
-				DPRINTF("%s: large_hash_table[%u] (%p) [%u] .page=%p .size=%lx\n", label,
-					i, p, count, p->page, p->size);
-			}
-		}
-	}
+	DPRINTF("large_pages\n");
+	middle_table_dump(state->large_pages, label, malloc_user_va_space_bits, 0);
+
+	DPRINTF("all_pages\n");
+	middle_table_dump(state->all_pages, label, malloc_user_va_space_bits, 0);
 }
 
-/*
-  Calculate a hash value from address for indexing
-  512 (sizeof(void *) / PAGE_SIZE) pointers in a page.
-*/
-static unsigned int malloc_hash(void *ptr) {
-	unsigned int r = 0;
-	unsigned long addr = (unsigned long)ptr >> PAGE_BITS;
-	// Folding hash of 9 bits
-	do {
-		r ^= addr & 0x1ff;
-		addr >>= 9;
-	} while (addr);
-	DPRINTF("hash(%p) => %u\n", ptr, r);
-	return r;
-}
 /*
   Allocate a page table entry for internal use from dedicated page
   table slabs.
 */
-static struct small_pagelist *pagetable_new(void) {
-	struct small_pagelist *ret;
+static union pagelist *pagetable_new(struct internal_pagelist **pagetable,
+				     size_t size) {
+	union pagelist *ret;
 
-	unsigned int index = get_index(sizeof(*ret));
+	unsigned int index = get_index(size);
 	for (;;) {
-		for (struct small_pagelist *p = state->pagetables; p;
-		     p = p->next) {
+		for (struct internal_pagelist *p = *pagetable; p; p = p->next) {
 			int offset = bitmap_find_clear(
-				p->bitmap, bitmap_bits(sizeof(*ret)),
-				p->access_randomizer_state);
+				p->s.bitmap, bitmap_bits(size),
+				p->s.access_randomizer_state);
 
 			if (offset >= 0) {
-				ret = ptr_to_offset_in_page(p->page, index,
+				ret = ptr_to_offset_in_page(p->s.page, index,
 							    offset);
-				bitmap_set(p->bitmap, offset);
+				bitmap_set(p->s.bitmap, offset);
 				goto found;
 			}
 		}
@@ -553,23 +813,42 @@ static struct small_pagelist *pagetable_new(void) {
 		if (page == MAP_FAILED)
 			goto oom;
 
-		/*
-		  Mark allocation for the page table entry for
-		  managing the page itself in the bitmap.
-		*/
-		// TODO offset could be randomized instead of last index
-		int offset = last_index(sizeof(*ret));
-		struct small_pagelist *new = ptr_to_offset_in_page(page, index,
-								   offset);
-		new->page = page;
-		bitmap_set(new->bitmap, offset);
-		get_random(&new->access_randomizer_state,
-			   sizeof(new->access_randomizer_state));
-		new->next = state->pagetables;
-		DPRINTF("new pagetable %p page %p rnd %lx\n", new, new->page,
-			new->access_randomizer_state);
+		struct internal_pagelist *new;
+		if (pagetable == &state->pagetables) {
+			/*
+			  Page is managed by taking a piece of it for
+			  internal_pagelist. Mark allocation for the
+			  page table entry for managing the page
+			  itself in the bitmap.
+			*/
+			// TODO offset could be randomized instead of last index
+			int offset = last_index(size);
+			new = ptr_to_offset_in_page(page, index, offset);
+			bitmap_set(new->s.bitmap, offset);
+			new->s.index = index;
+		} else {
+			/*
+			  Page is managed with separate internal_pagelist.
+			*/
+			new = (struct internal_pagelist *)
+				pagetable_new(&state->pagetables,
+					      sizeof(struct internal_pagelist));
+			if (!new) {
+				munmap(page, PAGE_SIZE);
+				goto oom;
+			}
+			memset(new->s.bitmap, 0, sizeof(new->s.bitmap));
+			new->s.index = index;
+		}
+
+		new->s.page = page;
+		get_random(&new->s.access_randomizer_state,
+			   sizeof(new->s.access_randomizer_state));
+		new->next = *pagetable;
+		DPRINTF("new pagetable %p page %p rnd %lx\n", new, new->s.page,
+			new->s.access_randomizer_state);
 		// New page is inserted at head of list, retry.
-		state->pagetables = new;
+		*pagetable = new;
 	}
 
 found:
@@ -582,40 +861,44 @@ oom:
 /*
   Free a page table entry.
 */
-static void pagetable_free(struct small_pagelist *entry) {
-	int size_index = get_index(sizeof(struct small_pagelist));
-	for (struct small_pagelist *p = state->pagetables, *prev = p; p;
+static void pagetable_free(struct internal_pagelist **pagetable,
+			   union pagelist *entry) {
+	DPRINTF("*pagetable %p (from pagetable %p), entry %p\n", *pagetable, pagetable, entry);
+	for (struct internal_pagelist *p = *pagetable, *prev = p; p;
 	     prev = p, p = p->next) {
-		DPRINTF(".page=%p bm=%lx\n", p->page, p->bitmap[0]);
-		if (((unsigned long)p->page & PAGE_MASK) ==
+		DPRINTF("checking %p .page=%p bm=%lx\n", p, p->s.page, p->s.bitmap[0]);
+		if (((unsigned long)p->s.page & PAGE_MASK) ==
 		    ((unsigned long)entry & PAGE_MASK)) {
 			// Calculate the number of the entry for its address
 			// using the size class
 			unsigned int bit = ((unsigned long)entry & ~PAGE_MASK) >>
-				(size_index + MIN_ALLOC_BITS);
+				(p->s.index + MIN_ALLOC_BITS);
 			DPRINTF("found match %p == %p, clearing bit %u "
 				"(index %d)\n",
-				entry, p->page, bit, size_index);
-			bitmap_clear(p->bitmap, bit);
+				entry, p->s.page, bit, p->s.index);
+			bitmap_clear(p->s.bitmap, bit);
 
-			/*
-			  Check for emptiness excluding the last bit
-			  (entry used for managing the page itself)
-			*/
-			if (bitmap_is_empty(
-				    p->bitmap,
-				    last_index(sizeof(struct small_pagelist)))) {
-				unsigned long guard_size = get_guard_size(
-					PAGE_SIZE);
+			size_t check_entries;
+			if (pagetable == &state->pagetables)
+				check_entries = last_index(sizeof(struct internal_pagelist));
+			else
+				/* The last entry can be also used,
+				   it's not used for managing the
+				   page, so add one */
+				check_entries = last_index(1 << (p->s.index + MIN_ALLOC_BITS)) + 1;
+
+			DPRINTF("check_entries %zu vs index %d\n", check_entries, p->s.index);
+			if (bitmap_is_empty(p->s.bitmap, check_entries)) {
+				DPRINTF("bitmap is empty at %p\n", p);
+				unsigned long guard_size = get_guard_size(PAGE_SIZE);
 				DPRINTF("unmap pagetable %p (guards %lu)\n",
-					p->page, guard_size);
+					p->s.page, guard_size);
 				/*
-				  Because the page contains the entry
-				  for managing itself, grab next entry
-				  pointer before the page is unmapped.
+				  Grab next entry pointer before the
+				  page is unmapped.
 				*/
-				struct small_pagelist *next = p->next;
-				int r = munmap((void *)((unsigned long)p->page -
+				struct internal_pagelist *next = p->next;
+				int r = munmap((void *)((unsigned long)p->s.page -
 							guard_size),
 					       PAGE_SIZE + 2 * guard_size);
 				if (r < 0) {
@@ -623,10 +906,13 @@ static void pagetable_free(struct small_pagelist *entry) {
 					abort();
 				}
 				if (prev == p)
-					state->pagetables = next;
+					*pagetable = next;
 				else
 					prev->next = next;
-			}
+				if (pagetable != &state->pagetables)
+					pagetable_free(&state->pagetables, (union pagelist *)p);
+			} else
+				DPRINTF("bitmap isn't empty at %p\n", p);
 			return;
 		}
 	}
@@ -885,10 +1171,10 @@ static __attribute__((constructor)) void init(void) {
 	  Select random slabs for the state. Exclude last index, used
 	  below for internal use.
 	*/
-	int pages_index = get_index(sizeof(struct small_pagelist));
-	unsigned int last_offset = last_index(sizeof(struct small_pagelist));
+	int pages_index = get_index(sizeof(struct internal_pagelist));
+	unsigned int last_offset = last_index(sizeof(struct internal_pagelist));
 	unsigned int num_slabs = align_up_size(sizeof(*state)) /
-		align_up_size(sizeof(struct small_pagelist));
+		align_up_size(sizeof(struct internal_pagelist));
 	unsigned int offset = randomize_int(0, last_offset - 1 - num_slabs);
 	state = ptr_to_offset_in_page(pagetables, pages_index, offset);
 
@@ -901,21 +1187,12 @@ static __attribute__((constructor)) void init(void) {
 	bitmap_set(&temp_bitmap, last_offset);
 	state->pagetables = ptr_to_offset_in_page(pagetables, pages_index,
 						  last_offset);
-	state->pagetables->page = pagetables;
-	get_random(&state->pagetables->access_randomizer_state,
-		   sizeof(state->pagetables->access_randomizer_state));
+	state->pagetables->s.page = pagetables;
+	state->pagetables->s.index = pages_index;
+	get_random(&state->pagetables->s.access_randomizer_state,
+		   sizeof(state->pagetables->s.access_randomizer_state));
 	// Copy temporary bitmap
-	state->pagetables->bitmap[0] = temp_bitmap;
-
-	// Allocate hash tables
-	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
-		state->small_hash_tables[i] = mmap_random(PAGE_SIZE, -1);
-		if (state->small_hash_tables[i] == MAP_FAILED)
-			abort();
-	}
-	state->large_hash_table = mmap_random(PAGE_SIZE, -1);
-	if (state->large_hash_table == MAP_FAILED)
-		abort();
+	state->pagetables->s.bitmap[0] = temp_bitmap;
 
 	DPRINTF("%d VA space bits, mask %16.16lx, getrandom() bytes %d\n",
 		malloc_user_va_space_bits, malloc_random_address_mask,
@@ -977,37 +1254,31 @@ static void *aligned_malloc(size_t size, size_t alignment) {
 	unsigned int index = get_index(MAX(size, alignment));
 	size_t real_size;
 	void *alloc_start;
+
+	pthread_mutex_lock(&malloc_lock);
 	if (index == (unsigned int)-1) {
 		// New large allocation
 		real_size = PAGE_ALIGN_UP(size);
 
-		// TODO separate mutexes for large pages and page table entries?
-		pthread_mutex_lock(&malloc_lock);
-		struct large_pagelist *new =
-			(struct large_pagelist *)pagetable_new();
+		union pagelist *new = pagetable_new(&state->pagetables,
+						    sizeof(struct internal_pagelist));
 		if (!new)
 			goto oom;
 		void *page = mmap_random(real_size, extra_mask);
 		if (page == MAP_FAILED)
 			goto oom;
 
-		new->page = page;
-		new->size = size;
+		new->l.page = page;
+		new->l.size = size;
 
-		// Insert in hash table and list
-		unsigned int hash = malloc_hash(new->page);
-		new->hash_next = state->large_hash_table[hash];
-		state->large_hash_table[hash] = new;
-
-		// Insert in doubly linked global list
-		if (state->large_pages)
-			state->large_pages->prev = new;
-		new->next = state->large_pages;
-		new->prev = NULL;
-		state->large_pages = new;
-
-		DPRINTF("new large page %p .page=%p .size=%lx hash=%u\n", new,
-			new->page, new->size, hash);
+		middle_table_insert(&state->large_pages, new, page,
+				    malloc_user_va_space_bits,
+				    MIDDLE_PAGE_TYPE_LARGE);
+		middle_table_insert(&state->all_pages, new, page,
+				    malloc_user_va_space_bits,
+				    MIDDLE_PAGE_TYPE_LARGE);
+		DPRINTF("new large page %p .page=%p .size=%lx\n", new,
+			new->l.page, new->l.size);
 
 		state->large_count++;
 		/*
@@ -1024,69 +1295,28 @@ static void *aligned_malloc(size_t size, size_t alignment) {
 					<< align_bits;
 				DPRINTF("randomized %p with offset %lu "
 					"(%lu positions, %d bits)\n",
-					new->page, page_offset, slack,
+					new->l.page, page_offset, slack,
 					align_bits);
 			}
 		}
-		alloc_start = new->page;
-		ret = (void *)((unsigned long)new->page + page_offset);
+		alloc_start = new->l.page;
+		ret = (void *)((unsigned long)new->l.page + page_offset);
 	} else {
 		// New small allocation
 		real_size = 1 << (index + MIN_ALLOC_BITS);
 
-		// TODO separate mutexes for each slab class and page table
-		// entries?
-		pthread_mutex_lock(&malloc_lock);
-
-		for (;;) {
-			// Try to find a free entry in the free slabs
-			for (struct small_pagelist *p = state->small_pages[index];
-			     p; p = p->next) {
-				if ((unsigned long)p->page & ~extra_mask)
-					continue;
-
-				int offset = bitmap_find_clear(
-					p->bitmap, bitmap_bits(real_size),
-					p->access_randomizer_state);
-
-				if (offset >= 0) {
-					DPRINTF("found offset %d ptr %p\n",
-						offset, p->page);
-					ret = ptr_to_offset_in_page(
-						p->page, index, offset);
-					bitmap_set(p->bitmap, offset);
-					/*
-					  Randomize start of for example 1600
-					  byte allocation with 32 byte alignment
-					  in a 2048 byte slab
-					*/
-					unsigned int align_bits = __builtin_ctzl(
-						extra_mask & MIN_ALLOC_MASK);
-					unsigned long page_offset = 0;
-					if (align_bits <
-					    (index + MIN_ALLOC_BITS)) {
-						unsigned long slack = (real_size -
-								       size) >>
-							align_bits;
-						if (slack) {
-							page_offset =
-								randomize_int(0, slack)
-								<< align_bits;
-							DPRINTF("randomized %p with offset %lu (%lu positions, %d bits)\n",
-								ret, page_offset,
-								slack,
-								align_bits);
-						}
-					}
-					alloc_start = ret;
-					ret = (void *)((unsigned long)ret +
-						       page_offset);
-					goto found;
-				}
-			}
-
+		struct small_page_find_cb_data s = {
+			.index = index,
+			.real_size = real_size,
+			.size = size,
+			.extra_mask = extra_mask,
+		};
+		// Try to find a free entry in the free slabs
+		if (!middle_table_iterate(state->small_pages[index],
+					  small_page_find_cb, &s)) {
 			// Not found, allocate a new page
-			struct small_pagelist *new = pagetable_new();
+			union pagelist *new = pagetable_new(&state->pagetables,
+							    sizeof(struct internal_pagelist));
 			if (!new)
 				goto oom;
 
@@ -1094,39 +1324,35 @@ static void *aligned_malloc(size_t size, size_t alignment) {
 			if (page == MAP_FAILED)
 				goto oom;
 
-			new->page = page;
+			new->s.page = page;
+			new->s.index = index;
 			/*
 			  While the pages returned by mmap() will be
 			  zeroed by the kernel, the page table entry
 			  received may be an old recycled one, so
 			  let's clear the bitmap.
 			*/
-			memset(new->bitmap, 0, sizeof(new->bitmap));
+			memset(new->s.bitmap, 0, sizeof(new->s.bitmap));
 
-			// Insert in hash table and list
-			unsigned int hash = malloc_hash(new->page);
-			new->hash_next = state->small_hash_tables[index][hash];
-			state->small_hash_tables[index][hash] = new;
-
-			// Insert in doubly linked global list
-			if (state->small_pages[index])
-				state->small_pages[index]->prev = new;
-			new->next = state->small_pages[index];
-			new->prev = NULL;
-			state->small_pages[index] = new;
-
-			get_random(&new->access_randomizer_state,
-				   sizeof(new->access_randomizer_state));
+			get_random(&new->s.access_randomizer_state,
+				   sizeof(new->s.access_randomizer_state));
+			middle_table_insert(&state->small_pages[index], new, page,
+					    malloc_user_va_space_bits,
+					    MIDDLE_PAGE_TYPE_SMALL);
+			middle_table_insert(&state->all_pages, new, page,
+					    malloc_user_va_space_bits,
+					    MIDDLE_PAGE_TYPE_SMALL);
 			DPRINTF("new small pagetable at index %u %p .page=%p "
-				".rnd=%lx hash=%u\n",
-				index, new, new->page,
-				new->access_randomizer_state, hash);
+				".rnd=%lx\n",
+				index, new, new->s.page,
+				new->s.access_randomizer_state);
 			state->small_count[index]++;
+			small_page_find_cb(new, &s);
 			pagetables_dump("post adding new page table");
 		}
+		alloc_start = s.alloc_start;
+		ret = s.ret;
 	}
-found:
-	// TODO more mutexes
 	pthread_mutex_unlock(&malloc_lock);
 
 	// Fill memory with junk
@@ -1140,7 +1366,6 @@ finish:
 	errno = ret_errno;
 	return ret;
 oom:
-	// TODO more mutexes
 	pthread_mutex_unlock(&malloc_lock);
 	errno = ENOMEM;
 	return NULL;
@@ -1175,50 +1400,38 @@ size_t malloc_usable_size(void *ptr) {
 	DPRINTF("malloc_usable_size(%p)\n", ptr);
 	unsigned long address = (unsigned long)ptr;
 	unsigned long page_address = address & PAGE_MASK;
-	unsigned int hash = malloc_hash((void *)page_address);
 
 	// Scan the slab pages if the page matches the pointer.
-	// TODO separate mutexes for large pages and page table entries?
 	pthread_mutex_lock(&malloc_lock);
-	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
-		for (struct small_pagelist *p = state->small_hash_tables[i][hash]; p;
-		     p = p->hash_next) {
-			DPRINTF("pages[%u] .page=%p bm=%lx\n", i, p->page,
-				p->bitmap[0]);
-			if ((unsigned long)p->page == page_address) {
-				// Recover randomization
-				unsigned long offset = address &
-					((1 << (i + MIN_ALLOC_BITS)) - 1);
-				ret = (1 << (i + MIN_ALLOC_BITS)) - offset;
-				goto finish;
-			}
-		}
+	union pagelist **entry = middle_table_find(&state->all_pages, page_address,
+						   malloc_user_va_space_bits);
+	if (!entry) {
+		// Not found, maybe a bug in the calling program?
+		// TODO Optionally just ignore the error?
+		fprintf(stderr, "malloc_usable_size: %p not found!\n", ptr);
+		abort();
 	}
 
-	/*
-	  Not found in the small slabs, so let's try the large
-	  allocations next.
-	*/
-	DPRINTF("trying large list\n");
-
-	for (struct large_pagelist *p = state->large_hash_table[hash]; p;
-	     p = p->hash_next) {
-		DPRINTF(".page=%p .size=%lx\n", p->page, p->size);
-		if ((unsigned long)p->page == page_address) {
-			DPRINTF("found\n");
-			// Recover randomization
-			unsigned long offset = address & ~PAGE_MASK;
-			ret = PAGE_ALIGN_UP(p->size) - offset;
-			goto finish;
-		}
+	union pagelist *p = (union pagelist *)((unsigned long)*entry &
+					       MIDDLE_PAGE_TYPE_MASK);
+	// Recover randomization
+	switch ((unsigned long)*entry & ~MIDDLE_PAGE_TYPE_MASK) {
+	case MIDDLE_PAGE_TYPE_SMALL: {
+		unsigned long offset = address & ((1 << (p->s.index +
+							 MIN_ALLOC_BITS)) - 1);
+		ret = (1 << (p->s.index + MIN_ALLOC_BITS)) - offset;
+		break;
 	}
-	// Not found, maybe a bug in the calling program?
-	// TODO Optionally just ignore the error?
-	fprintf(stderr, "malloc_usable_size: %p not found!\n", ptr);
-	abort();
-finish:
-	// TODO more mutexes
+	case MIDDLE_PAGE_TYPE_LARGE: {
+		unsigned long offset = address & ~PAGE_MASK;
+		ret = PAGE_ALIGN_UP(p->l.size) - offset;
+		break;
+	}
+	case MIDDLE_PAGE_TYPE_MIDDLE:
+		abort();
+	}
 	pthread_mutex_unlock(&malloc_lock);
+finish:
 	DPRINTF("returning %lx\n", ret);
 	errno = saved_errno;
 	return ret;
@@ -1243,118 +1456,80 @@ void free(void *ptr) {
 	DPRINTF("free(%p)\n", ptr);
 	unsigned long address = (unsigned long)ptr;
 	unsigned long page_address = address & PAGE_MASK;
-	unsigned int hash = malloc_hash((void *)page_address);
 
 	// Scan the slab pages if the page matches the pointer.
-	// TODO separate mutexes for large pages and page table entries?
 	pthread_mutex_lock(&malloc_lock);
-	for (unsigned int i = 0; i < MAX_SIZE_CLASSES; i++) {
-		for (struct small_pagelist *p = state->small_hash_tables[i][hash],
-			     *hash_prev = p; p;
-		     hash_prev = p, p = p->hash_next) {
-			DPRINTF("checking index %u hash %u list %p page %p\n",
-				i, hash, p, p->page);
-			if ((unsigned long)p->page == page_address) {
-				unsigned int bits = bitmap_bits(
-					1 << (i + MIN_ALLOC_BITS));
-				bitmap_clear(p->bitmap,
-					     (address & ~PAGE_MASK) >>
-						     (i + MIN_ALLOC_BITS));
-				if (bitmap_is_empty(p->bitmap, bits)) {
-					unsigned long guard_size =
-						get_guard_size(PAGE_SIZE);
-					// Immediately unmap pages
-					DPRINTF("unmap small %p (guards %lu)\n",
-						p->page, guard_size);
-					int r = munmap(
-						(void *)((unsigned long)p->page -
-							 guard_size),
-						PAGE_SIZE + 2 * guard_size);
-					if (r < 0) {
-						perror("munmap");
-						abort();
-					}
-
-					// Update hash table and list
-					if (hash_prev == p)
-						state->small_hash_tables[i][hash] = p->hash_next;
-					else
-						hash_prev->hash_next = p->hash_next;
-
-					// Update doubly linked global list
-					if (p->prev == NULL)
-						state->small_pages[i] = p->next;
-					else
-						p->prev->next = p->next;
-					if (p->next)
-						p->next->prev = p->prev;
-
-					pagetable_free(p);
-				} else if (malloc_fill_junk != '\0') {
-					// Filter out randomization
-					ptr = (void *)(address &
-						       ~((1UL
-							  << (i + MIN_ALLOC_BITS)) -
-							 1));
-					// Immediately fill the freed memory
-					// with junk
-					DPRINTF("fill junk %p +%u\n", ptr,
-						1 << (i + MIN_ALLOC_BITS));
-					memset(ptr, malloc_fill_junk,
-					       1 << (i + MIN_ALLOC_BITS));
-				}
-				goto found;
-			}
-		}
+	union pagelist **entry = middle_table_find(&state->all_pages, page_address,
+						   malloc_user_va_space_bits);
+	if (!entry) {
+		// Not found, maybe a bug in the calling program?
+		// TODO Optionally just ignore the error?
+		fprintf(stderr, "free: %p not found!\n", ptr);
+		abort();
 	}
 
-	/*
-	  Not found in the small slabs, so let's try the large
-	  allocations next.
-	*/
-	DPRINTF("trying large list\n");
-
-	for (struct large_pagelist *p = state->large_hash_table[hash],
-		     *hash_prev = p; p;
-	     hash_prev = p, p = p->hash_next) {
-		DPRINTF(".page=%p .size=%lx\n", p->page, p->size);
-		if ((unsigned long)p->page == page_address) {
-			// Immediately unmap all freed memory
-			unsigned long guard_size = get_guard_size(p->size);
-			DPRINTF("unmap large %p +%lu + guard %lu\n", p->page,
-				p->size, guard_size);
-			int r = munmap(
-				(void *)((unsigned long)p->page - guard_size),
-				p->size + 2 * guard_size);
+	union pagelist *p = (union pagelist *)((unsigned long)*entry
+					       & MIDDLE_PAGE_TYPE_MASK);
+	switch ((unsigned long)*entry & ~MIDDLE_PAGE_TYPE_MASK) {
+	case MIDDLE_PAGE_TYPE_SMALL: {
+		unsigned int bits = bitmap_bits((1 << (p->s.index + MIN_ALLOC_BITS)));
+		bitmap_clear(p->s.bitmap, (address & ~PAGE_MASK) >>
+			     (p->s.index + MIN_ALLOC_BITS));
+		if (bitmap_is_empty(p->s.bitmap, bits)) {
+			unsigned long guard_size =
+				get_guard_size(PAGE_SIZE);
+			// Immediately unmap pages
+			DPRINTF("unmap small %p [%u] (guards %lu)\n",
+				p->s.page, p->s.index, guard_size);
+			int r = munmap((void *)((unsigned long)p->s.page -
+						guard_size),
+				       PAGE_SIZE + 2 * guard_size);
 			if (r < 0) {
 				perror("munmap");
 				abort();
 			}
 
-			// Update hash table and list
-			if (hash_prev == p)
-				state->large_hash_table[hash] = p->hash_next;
-			else
-				hash_prev->hash_next = p->hash_next;
-
-			// Update doubly linked global list
-			if (p->prev == NULL)
-				state->large_pages = p->next;
-			else
-				p->prev->next = p->next;
-			if (p->next)
-				p->next->prev = p->prev;
-
-			pagetable_free((struct small_pagelist *)p);
-			goto found;
+			middle_table_delete(&state->small_pages[p->s.index],
+					    page_address, malloc_user_va_space_bits);
+			middle_table_delete(&state->all_pages, page_address,
+					    malloc_user_va_space_bits);
+			pagetable_free(&state->pagetables, p);
+		} else if (malloc_fill_junk != '\0') {
+			// Filter out randomization
+			ptr = (void *)(address &
+				       ~((1UL << (p->s.index + MIN_ALLOC_BITS))
+					 - 1));
+			// Immediately fill the freed memory
+			// with junk
+			DPRINTF("fill junk %p +%u\n", ptr,
+				1 << (p->s.index + MIN_ALLOC_BITS));
+			memset(ptr, malloc_fill_junk,
+			       1 << (p->s.index + MIN_ALLOC_BITS));
 		}
+		break;
 	}
-	// Not found, maybe a bug in the calling program?
-	// TODO Optionally just ignore the error?
-	fprintf(stderr, "free: %p not found!\n", ptr);
-	abort();
-found:
-	// TODO more mutexes
+	case MIDDLE_PAGE_TYPE_LARGE: {
+		// Immediately unmap all freed memory
+		unsigned long guard_size = get_guard_size(p->l.size);
+		DPRINTF("unmap large %p +%lu + guard %lu\n", p->l.page,
+			p->l.size, guard_size);
+		int r = munmap((void *)((unsigned long)p->l.page - guard_size),
+			       p->l.size + 2 * guard_size);
+		if (r < 0) {
+			perror("munmap");
+			abort();
+		}
+
+		middle_table_delete(&state->large_pages, page_address,
+				    malloc_user_va_space_bits);
+		middle_table_delete(&state->all_pages, page_address,
+				    malloc_user_va_space_bits);
+		pagetable_free(&state->pagetables, p);
+		break;
+	}
+	case MIDDLE_PAGE_TYPE_MIDDLE:
+		abort();
+	}
 	pthread_mutex_unlock(&malloc_lock);
 	pagetables_dump("post free");
 finish:
