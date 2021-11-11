@@ -1512,6 +1512,9 @@ int main(void) {
 			assert(ptrv[j]);
 			// Test that all memory is writable
 			memset(ptrv[j], 0, 1UL << i);
+			// Check that all pointers are unique
+			for (int k = 0; k < j; k++)
+				assert(ptrv[j] != ptrv[k]);
 		}
 #if DEBUG_2
 		for (int j = 0; j < ROUNDS2; j++) {
@@ -1523,6 +1526,9 @@ int main(void) {
 			// Test that all memory is writable
 			assert(ptrv[j]);
 			memset(ptrv[j], 0, 1UL << i);
+			// Check that all pointers are unique
+			for (int k = 0; k < j; k++)
+				assert(ptrv[j] != ptrv[k]);
 		}
 #endif // DEBUG_2
 		for (int j = 0; j < ROUNDS2; j++)
@@ -1540,6 +1546,9 @@ int main(void) {
 		assert(ptrv[j]);
 		// Test that memory is writable
 		memset(ptrv[j], 0, 2048);
+		// Check that all pointers are unique
+		for (int k = 0; k < j; k++)
+			assert(ptrv[j] != ptrv[k]);
 	}
 	for (int j = 0; j < ROUNDS3; j++)
 		free(ptrv[j]);
