@@ -236,10 +236,14 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 				 MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_PRIVATE,
 				 -1, 0);
 		if (ret == MAP_FAILED) {
-			if (errno == EEXIST || errno == EINVAL)
-				continue;
-			else
-				DPRINTF("mmap: %m");
+			/*
+			  Sadly mmap() can return ENOMEM in case the
+			  address supplied exceeds VA space, so this
+			  isn't 100% watertight.
+			*/
+			if (errno == ENOMEM)
+				return NULL;
+			continue;
 		}
 
 		unsigned long lower_guard = (unsigned long)ret;
