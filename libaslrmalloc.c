@@ -823,7 +823,8 @@ static __attribute__((constructor)) void init(void) {
 	*/
 	malloc_user_va_space_bits = 36;
 	if (r == 1)
-		malloc_user_va_space_bits = ((eax >> 8) & 0xff) - 1;
+		malloc_user_va_space_bits = ((eax >> 8) & 0xff);
+	malloc_user_va_space_bits--;
 	malloc_random_address_mask = ((1UL << malloc_user_va_space_bits) - 1) &
 		PAGE_MASK;
 
