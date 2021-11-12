@@ -242,7 +242,7 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 			  isn't 100% watertight.
 			*/
 			if (errno == ENOMEM)
-				return NULL;
+				return ret;
 			continue;
 		}
 
