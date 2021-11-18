@@ -74,6 +74,8 @@
 
 // Avoid addresses within ±32MB of stack
 #define STACK_ZONE (32 * 1024 * 1024)
+// Avoid addresses in lowest 1MB
+#define LOW_ZONE (1 * 1024 * 1024)
 
 #define MIN_ALLOC_BITS 4
 #define MIN_ALLOC_SIZE (1 << MIN_ALLOC_BITS)
@@ -225,11 +227,18 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 
 		addr <<= PAGE_BITS;
 		addr &= malloc_random_address_mask & extra_mask;
-		addr -= guard_size;
 
-		// Don't get too close to the stack
-		if (addr >= stack - STACK_ZONE && addr <= stack + STACK_ZONE)
+		/*
+		  Don't exceed VA space, get too close to the stack
+		  or try use too low addresses.
+		*/
+		if (addr + size + guard_size > (1ULL << malloc_user_va_space_bits) ||
+		    (addr + size + guard_size >= stack - STACK_ZONE &&
+		     addr - guard_size <= stack + STACK_ZONE) ||
+		    addr < LOW_ZONE)
 			continue;
+
+		addr -= guard_size;
 
 		void *ret = mmap((void *)addr, size + 2 * guard_size,
 				 PROT_READ | PROT_WRITE,
@@ -239,7 +248,8 @@ static void *mmap_random(size_t size, unsigned long extra_mask) {
 			/*
 			  Sadly mmap() can return ENOMEM in case the
 			  address supplied exceeds VA space, so this
-			  isn't 100% watertight.
+			  isn't 100% watertight, but we try hard above
+			  not to give such addresses to kernel.
 			*/
 			if (errno == ENOMEM)
 				return ret;
