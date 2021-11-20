@@ -923,14 +923,15 @@ static __attribute__((destructor)) void fini(void) {
 	}
 }
 
-static void *aligned_malloc(size_t size, unsigned long extra_mask) {
+static void *aligned_malloc(size_t size, size_t alignment) {
 	int ret_errno = errno;
 	void *ret = NULL;
 
 	if (!state)
 		init();
 
-	DPRINTF("aligned_malloc(%lu, %lx)\n", size, extra_mask);
+	DPRINTF("aligned_malloc(%lu, %lu)\n", size, alignment);
+
 	/*
 	  The manual page says that malloc(0) may return NULL but
 	  sadly some applications expect it to return accessible
@@ -943,13 +944,15 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 			size = 1;
 	}
 
-	if (size > (1UL << malloc_user_va_space_bits)) {
+	if (size >= (1UL << malloc_user_va_space_bits) ||
+	    alignment >= (1UL << malloc_user_va_space_bits)) {
 		ret_errno = ENOMEM;
 		goto finish;
 	}
 
 	// Get slab size class for the requested size.
-	unsigned int index = get_index(size);
+	unsigned long extra_mask = ~(alignment - 1);
+	unsigned int index = get_index(MAX(size, alignment));
 	size_t real_size;
 	void *alloc_start;
 	if (index == (unsigned int)-1) {
@@ -1017,8 +1020,11 @@ static void *aligned_malloc(size_t size, unsigned long extra_mask) {
 			// Try to find a free entry in the free slabs
 			for (struct small_pagelist *p = state->small_pages[index];
 			     p; p = p->next) {
+				if ((unsigned long)p->page & ~extra_mask)
+					continue;
+
 				int offset = bitmap_find_clear(
-					p->bitmap, bitmap_bits(size),
+					p->bitmap, bitmap_bits(real_size),
 					p->access_randomizer_state);
 
 				if (offset >= 0) {
@@ -1125,7 +1131,7 @@ void *malloc(size_t size) {
 	if (malloc_passthrough)
 		return libc_malloc(size);
 
-	return aligned_malloc(size, -1);
+	return aligned_malloc(size, 1);
 }
 
 /*
@@ -1433,9 +1439,7 @@ int posix_memalign(void **memptr, size_t alignment, size_t size) {
 		return EINVAL;
 	}
 
-	unsigned long extra_mask = ~(alignment - 1);
-	DPRINTF("calling aligned_malloc(%lx, %lx)\n", size, extra_mask);
-	void *ptr = aligned_malloc(size, extra_mask);
+	void *ptr = aligned_malloc(size, alignment);
 	if (ptr) {
 		*memptr = ptr;
 		DPRINTF("returning %p\n", ptr);
@@ -1514,12 +1518,17 @@ void *pvalloc(size_t size) {
 #define ROUNDS3 129
 #endif // ROUNDS3
 
+static void check_align(void *ptr, size_t align) {
+	assert(((unsigned long)ptr & (align - 1)) == 0);
+}
+
 int main(void) {
 	for (int i = 0; i < ROUNDS1; i++) {
 		void *ptrv[ROUNDS2];
 		for (int j = 0; j < ROUNDS2; j++) {
 			ptrv[j] = malloc(1UL << i);
 			assert(ptrv[j]);
+			check_align(ptrv[j], sizeof(void *));
 			// Test that all memory is writable
 			memset(ptrv[j], 0, 1UL << i);
 			// Check that all pointers are unique
@@ -1531,10 +1540,12 @@ int main(void) {
 			ptrv[j] = realloc(ptrv[j], (1UL << i) + 4096);
 			// Test that all memory is writable
 			assert(ptrv[j]);
+			check_align(ptrv[j], sizeof(void *));
 			memset(ptrv[j], 0, (1UL << i) + 4096);
 			ptrv[j] = realloc(ptrv[j], (1UL << i));
 			// Test that all memory is writable
 			assert(ptrv[j]);
+			check_align(ptrv[j], sizeof(void *));
 			memset(ptrv[j], 0, 1UL << i);
 			// Check that all pointers are unique
 			for (int k = 0; k < j; k++)
@@ -1554,6 +1565,7 @@ int main(void) {
 	for (int j = 0; j < ROUNDS3; j++) {
 		ptrv[j] = malloc(2048);
 		assert(ptrv[j]);
+		check_align(ptrv[j], sizeof(void *));
 		// Test that memory is writable
 		memset(ptrv[j], 0, 2048);
 		// Check that all pointers are unique
@@ -1579,6 +1591,7 @@ int main(void) {
 
 	ptr = malloc(1);
 	assert(ptr);
+	check_align(ptr, sizeof(void *));
 	size_t usable_size = malloc_usable_size(ptr);
 	assert(usable_size >= 1);
 	/*
@@ -1600,10 +1613,12 @@ int main(void) {
 
 	ptr = calloc(4096, 1);
 	assert(ptr);
+	check_align(ptr, sizeof(void *));
 	// Test that all memory is writable
 	memset(ptr, 0, 4096);
 	void *ptr2 = calloc(4096, 4);
 	assert(ptr2);
+	check_align(ptr2, sizeof(void *));
 	// Test that all memory is writable
 	memset(ptr2, 0, 4096 * 4);
 	free(ptr);
@@ -1616,7 +1631,9 @@ int main(void) {
 	assert(errno == EBADF);
 
 	ptr = malloc(1);
+	check_align(ptr, sizeof(void *));
 	ptr = reallocarray(ptr, 2048, 1);
+	check_align(ptr, sizeof(void *));
 	free(ptr);
 
 	// malloc_usable_size(NULL) should return 0
@@ -1641,28 +1658,40 @@ int main(void) {
 	errno = EBADF;
 	r = posix_memalign(&ptr, 8192, 1);
 	assert(errno == EBADF && r == 0);
+	check_align(ptr, 8192);
 	free(ptr);
 
 	errno = EBADF;
 	r = posix_memalign(&ptr, 256, 5000);
 	assert(errno == EBADF && r == 0);
+	check_align(ptr, 256);
 	free(ptr);
 
 	errno = EBADF;
 	r = posix_memalign(&ptr, 32, 1600);
 	assert(errno == EBADF && r == 0);
+	check_align(ptr, 32);
 	free(ptr);
 
 	ptr = aligned_alloc(8192, 1);
+	check_align(ptr, 8192);
+	free(ptr);
+
+	ptr = aligned_alloc(2048, 256);
+	check_align(ptr, 2048);
 	free(ptr);
 
 	ptr = memalign(8192, 1);
+	check_align(ptr, 8192);
 	free(ptr);
 
+	size_t page_size = sysconf(_SC_PAGE_SIZE);
 	ptr = valloc(1);
+	check_align(ptr, page_size);
 	free(ptr);
 
 	ptr = pvalloc(1);
+	check_align(ptr, page_size);
 	free(ptr);
 
 	errno = EBADF;
@@ -1704,6 +1733,11 @@ int main(void) {
 	errno = EBADF;
 	// Test OOM
 	ptr = aligned_alloc(8192, (size_t)1024 * 1024 * 1024 * 1024 * 1024);
+	assert(errno == ENOMEM);
+
+	errno = EBADF;
+	// Test too large alignment
+	ptr = aligned_alloc((size_t)1024 * 1024 * 1024 * 1024 * 1024, 8192);
 	assert(errno == ENOMEM);
 
 #if !LIBC
