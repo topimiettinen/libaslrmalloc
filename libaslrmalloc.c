@@ -295,7 +295,7 @@ static unsigned int last_index(size_t size) {
 	for (unsigned int index = MIN_ALLOC_BITS; index < PAGE_BITS; index++)
 		if (size <= (1UL << index))
 			return (PAGE_SIZE / (1UL << index)) - 1;
-	return -1;
+	abort();
 }
 
 /*
@@ -306,7 +306,7 @@ static unsigned int align_up_size(size_t size) {
 	for (unsigned int index = MIN_ALLOC_BITS; index < PAGE_BITS; index++)
 		if (size <= (1UL << index))
 			return 1UL << index;
-	return PAGE_ALIGN_UP(size);
+	abort();
 }
 
 /*
