@@ -316,10 +316,17 @@ static unsigned int bitmap_bits(size_t size) {
 	return PAGE_SIZE / align_up_size(size);
 }
 
+
+// Get a bit from bitmap.
+static int bitmap_bit(unsigned long *bitmap, unsigned int bit) {
+	return !!(bitmap[bit >> ULONG_BITS] & (1UL << (bit & ~ULONG_MASK)));
+}
+
 /*
   Set bit in bitmap: indicates that the slab is in use.
 */
 static void bitmap_set(unsigned long *bitmap, unsigned int bit) {
+	assert(bitmap_bit(bitmap, bit) == 0);
 	bitmap[bit >> ULONG_BITS] |= 1UL << (bit & ~ULONG_MASK);
 }
 
@@ -327,6 +334,7 @@ static void bitmap_set(unsigned long *bitmap, unsigned int bit) {
   Clear bit in bitmap: slab is free.
 */
 static void bitmap_clear(unsigned long *bitmap, unsigned int bit) {
+	assert(bitmap_bit(bitmap, bit) == 1);
 	bitmap[bit >> ULONG_BITS] &= ~(1UL << (bit & ~ULONG_MASK));
 }
 
