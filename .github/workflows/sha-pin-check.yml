@@ -1,4 +1,15 @@
-- name: Ensure SHA Pinned Actions
-  # You may pin to the exact commit or the version.
-  uses: zgosalvez/github-actions-ensure-sha-pinned-actions@0b552a197e44b819629237e065d781f5ca691460
-  # uses: zgosalvez/github-actions-ensure-sha-pinned-actions@v1.1.1
+on: push
+
+name: Check SHAs
+
+jobs:
+  check_shas:
+    name: Check SHAs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@5a4ac9002d0be2fb38bd78e4b4dbde5606d7042f # v2.3.4
+      - name: Ensure SHA Pinned Actions
+      # You may pin to the exact commit or the version.
+      uses: zgosalvez/github-actions-ensure-sha-pinned-actions@0b552a197e44b819629237e065d781f5ca691460
+      # uses: zgosalvez/github-actions-ensure-sha-pinned-actions@v1.1.1
