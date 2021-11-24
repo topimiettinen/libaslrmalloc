@@ -1,0 +1,4 @@
+- name: Ensure SHA Pinned Actions
+  # You may pin to the exact commit or the version.
+  uses: zgosalvez/github-actions-ensure-sha-pinned-actions@0b552a197e44b819629237e065d781f5ca691460
+  # uses: zgosalvez/github-actions-ensure-sha-pinned-actions@v1.1.1
