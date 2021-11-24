@@ -4,7 +4,7 @@ path_classifiers:
 extraction:
   cpp:
     after_prepare:
-      - pip3 install meson==0.59.2
+      - pip3 install -r .github/workflows/requirements.txt --require-hashes
       - export PATH="/opt/work/.local/bin:$PATH"
     configure:
       command:
