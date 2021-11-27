@@ -11,7 +11,7 @@
 #error LIBASLRMALLOC not defined
 #endif
 
-void usage() {
+static void usage(void) {
 	printf("USAGE:");
 	printf("  libaslrmallocrun <PROGRAM> [ARGUMENTS]");
 }
