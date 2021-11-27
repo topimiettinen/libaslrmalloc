@@ -121,3 +121,11 @@ test('test_8', test_8, env: [
   'LIBASLRMALLOC_STRICT_POSIX_MEMALIGN_ERRNO=false',
   ]
 )
+
+# Test libaslrmallocrun
+test_9 = executable('test_9',
+  'libaslrmallocrun.c',
+  c_args: '-DLIBASLRMALLOC="@0@"'.format(libaslrmalloc.full_path()),
+  link_with: libaslrmalloc,
+)
+test('test_9', test_9, args: ['cat', '/proc/self/maps'])
