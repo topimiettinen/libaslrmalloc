@@ -23,6 +23,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	char *new_ld_preload = LIBASLRMALLOC;
+	/* Flawfinder: ignore */
 	const char *ld_preload = getenv("LD_PRELOAD");
 	if (ld_preload != NULL) {
 		if (asprintf(&new_ld_preload, "%s %s", ld_preload, LIBASLRMALLOC) == -1)
@@ -31,6 +32,7 @@ int main(int argc, char *argv[]) {
 	if (setenv("LD_PRELOAD", new_ld_preload, 1) != 0)
 		abort();
 
+	/* Flawfinder: ignore */
 	if (execvp(argv[1], &argv[1]) == -1) {
 		printf("libaslrmallocrun: Failed to start '%s': %s\n", argv[1], strerror(errno));
 		return 1;

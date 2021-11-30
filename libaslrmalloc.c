@@ -32,6 +32,7 @@
 #define reallocarray xreallocarray
 #define posix_memalign xposix_memalign
 #define aligned_alloc xaligned_alloc
+/* Flawfinder: ignore */
 #define memalign xmemalign
 #define valloc xvalloc
 #define pvalloc xpvalloc
@@ -156,7 +157,9 @@ static void *(*libc_pvalloc)(size_t);
 #define DPRINTF(format, ...)                                                 \
 	do {                                                                 \
 		if (malloc_debug) {                                          \
+			/* Flawfinder: ignore */			     \
 			char _buf[1024];                                     \
+			/* Flawfinder: ignore */			     \
 			int _r = snprintf(_buf, sizeof(_buf), "%s: " format, \
 					  __FUNCTION__, ##__VA_ARGS__);      \
 			if (_r > 0)                                          \
@@ -168,7 +171,9 @@ static void *(*libc_pvalloc)(size_t);
 #define DPRINTF_NOPREFIX(format, ...)                                 \
 	do {                                                          \
 		if (malloc_debug) {                                   \
+			/* Flawfinder: ignore */		      \
 			char _buf[1024];                              \
+			/* Flawfinder: ignore */		      \
 			int _r = snprintf(_buf, sizeof(_buf), format, \
 					  ##__VA_ARGS__);             \
 			if (_r > 0)                                   \
@@ -659,8 +664,10 @@ static void check_env(const char *name, bool *ret) {
 
 static void init_from_profile(const char *prefix) {
 	int r;
+	/* Flawfinder: ignore */
 	char profile_path[PATH_MAX];
 	int profile_file;
+	/* Flawfinder: ignore */
 	char profile_data[2048];
 	r = snprintf(
 		profile_path,
@@ -671,6 +678,7 @@ static void init_from_profile(const char *prefix) {
 	);
 	if (r < 0 || r > sizeof(profile_path))
 		return;
+	/* Flawfinder: ignore */
 	profile_file = open(profile_path, O_RDONLY);
 	if (profile_file == -1) {
 		// Read default profile instead
@@ -682,11 +690,13 @@ static void init_from_profile(const char *prefix) {
 			     );
 		if (r < 0 || r > sizeof(profile_path))
 			return;
+		/* Flawfinder: ignore */
 		profile_file = open(profile_path, O_RDONLY);
 		if (profile_file == -1)
 			return;
 	}
 
+	/* Flawfinder: ignore */
 	r = read(profile_file, profile_data, sizeof(profile_data));
 	if (r == -1 || r == sizeof(profile_data)) {
 		close(profile_file);
@@ -732,12 +742,15 @@ static void init_from_profiles(void) {
 	init_from_profile(SYSCONFDIR);
 	if (!getauxval(AT_SECURE) &&
 	    geteuid() == getuid() && getegid() == getgid()) {
+		/* Flawfinder: ignore */
 		const char *xdg_config = getenv("XDG_CONFIG_HOME");
 		if (xdg_config)
 			init_from_profile(xdg_config);
 		else {
+			/* Flawfinder: ignore */
 			const char *home = getenv("HOME");
 			if (home) {
+				/* Flawfinder: ignore */
 				char home_config[PATH_MAX];
 				snprintf(home_config, sizeof(home_config),
 					 "%s/.config", home);
@@ -754,6 +767,7 @@ static void init_from_profiles(void) {
   dlsym() calls calloc(), so let's use a temporary version.
 */
 static void *temp_calloc(size_t nmemb, size_t size) {
+	/* Flawfinder: ignore */
 	static char buf[256];
 	static int bufidx;
 	void *ret = &buf[bufidx];
@@ -1400,12 +1414,15 @@ void *realloc(void *ptr, size_t new_size) {
 		errno = ENOMEM;
 		return NULL;
 	}
+	/* Flawfinder: ignore */
 	memcpy(ret, ptr, MIN(old_size, new_size));
 
 	if (new_size > old_size && malloc_fill_junk != '\0') {
 		// Fill new part of memory with junk
+		/* Flawfinder: ignore */
 		DPRINTF("fill junk %p +%lu\n", &((char *)ret)[old_size],
 			new_size - old_size);
+		/* Flawfinder: ignore */
 		memset(&((char *)ret)[old_size], malloc_fill_junk,
 		       new_size - old_size);
 	}
@@ -1483,6 +1500,7 @@ void *aligned_alloc(size_t alignment, size_t size) {
   Obsolete. See manual page for memalign(). Locking is
   handled by aligned_alloc().
 */
+/* Flawfinder: ignore */
 void *memalign(size_t alignment, size_t size) {
 	if (malloc_passthrough)
 		return libc_memalign(alignment, size);
@@ -1689,6 +1707,7 @@ int main(void) {
 	check_align(ptr, 2048);
 	free(ptr);
 
+	/* Flawfinder: ignore */
 	ptr = memalign(8192, 1);
 	check_align(ptr, 8192);
 	free(ptr);
