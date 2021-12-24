@@ -63,6 +63,21 @@ This also applies to old memory in `realloc()`.
 Unmapping and filling can help find use-after-free ([CWE-416](https://cwe.mitre.org/data/definitions/416.html)) bugs.
 Filling can be turned off at runtime.
 
+The current implementation uses CPU page table like multi level
+structures to access pages rapidly.
+There are tables for each size class and also a global table for `free()`.
+Each intermediate table contains a number of pointers to small or large
+pagelist entries, or to further intermediate tables.
+The table is indexed by bits of the address (like CPU page tables) and
+the type of an entry is identified by low bits of the address.
+Leaf entries can exist at any level.
+
+The implementation is O(log N) for both allocating and `free()` for
+large (4096 up) allocations but O(N) for allocation of small items.
+Previous versions used a hash table (O(N) for `free()` for large
+number of allocations, though O(1) for the first 512) or linked lists
+(O(N) for any operation).
+
 Some Glibc specific deviations (`malloc(0)`, `calloc(X, Y)` where X * Y == 0, `errno` handling of `posix_memalign()`) are configurable
 to help portability to non-Glibc systems. For normal use, it's better to match Glibc in such cases.
 
@@ -81,10 +96,6 @@ to help portability to non-Glibc systems. For normal use, it's better to match G
 Fix bugs.
 
 Integration, packaging, CI etc.
-
-When more slabs or large pages are needed, a hash table is used with linked lists to connect them to main structure.
-This means that current implementation is O(N) for `free()` for large number of allocations (though O(1) for the first 512).
-This should be optimized to use modern tree structures to speed up freeing memory without weakening ASLR.
 
 For some loss of memory (which is secondary), further low bits of the start address could randomized always
 (select larger slab size than requested, use extra space for randomization).
@@ -116,9 +127,6 @@ The design should be very easy to extend to multithreaded allocator: each thread
 and own global structure, so there would be no locking issues.
 Freeing memory from a different thread would not be possible or very hard.
 
-Perhaps mutexes could be fine grained (one for internal page table, one for each small and one for the large page table).
-The bottleneck could then be that then also page table allocator would need a mutex and it would be shared by all allocations.
-
 Debugging could be more robust in multithread environment and early library startup.
 
 In case a huge alignment (bad for ASLR) is requested, hugepages could be used for `posix_memalign()` and `aligned_alloc()`.
@@ -131,3 +139,5 @@ That should only affect kernel's internal VMA structures, not CPU page tables.
 On Intel CPUs, `pkey_mprotect()` could be used to protect internal structures with [pkeys](https://man7.org/linux/man-pages/man7/pkeys.7.html) (weakly).
 
 Fully used slab pages could be kept in separate page table lists, so they wouldn't be consulted when looking for a free slab.
+
+Internal page tables could also use multi level page table approach to speed up `pagetable_free()`.
