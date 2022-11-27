@@ -176,3 +176,21 @@ With tree structures it should be possible to get O(log N) performance without l
 - Chromium crashes.
 - 0ad starts very fast, but crashes later.
 - 32 bit applications like Steam are not supported (and Steam also uses Chromium).
+
+## Contribute
+
+GitHub pull requests should be used for enhancements and new features. Bugs and other feedback should be reported as GitHub issues.
+
+Please follow the existing coding style.
+
+When adding new code, new automated tests should be added to keep code test coverage high.
+It's OK not to test all kernel related issues and some assertions for internal errors can't be tested.
+Low memory tests could be added in the future to test further code paths.
+
+## Releases
+
+TODO: probably SemVer, git tags
+
+## Security and vulnerability reporting policy
+
+TODO: just open GitHub issues for now
