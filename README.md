@@ -39,10 +39,10 @@ For 16 bytes (default) alignment, 448 / 16 = 28 different random positions are p
 
 Reading the [design document](/DESIGN.md) may present more complete view.
 
-[![SPDX-License-Identifier: LGPL-2.1-or-later](https://img.shields.io/static/v1?label=SPDX-License-Identifier&message=LGPL-2.1-or-later&color=blue&logo=open-source-initiative&logoColor=white&logoWidth=10&style=flat-square)](LICENSES/LGPL-2.1-or-later)
-[![SPDX-License-Identifier: BSD-3-Clause](https://img.shields.io/static/v1?label=SPDX-License-Identifier&message=BSD-3-Clause&color=blue&logo=open-source-initiative&logoColor=white&logoWidth=10&style=flat-square)](LICENSES/BSD-3-Clause)
+[![SPDX-License-Identifier: LGPL-2.1-or-later](https://img.shields.io/static/v1?label=SPDX-License-Identifier&message=LGPL-2.1-or-later&color=blue&logo=open-source-initiative&logoColor=white&logoWidth=10&style=flat-square)](LICENSES/LGPL-2.1-or-later.txt)
+[![SPDX-License-Identifier: BSD-3-Clause](https://img.shields.io/static/v1?label=SPDX-License-Identifier&message=BSD-3-Clause&color=blue&logo=open-source-initiative&logoColor=white&logoWidth=10&style=flat-square)](LICENSES/BSD-3-Clause.txt)
 
-`libaslrmalloc` is licensed with either [LGPL 2.1 (or later)](LICENSES/LGPL-2.1-or-later) or [BSD 3-clause](LICENSES/BSD-3-Clause) licenses.
+`libaslrmalloc` is licensed with either [LGPL 2.1 (or later)](LICENSES/LGPL-2.1-or-later.txt) or [BSD 3-clause](LICENSES/BSD-3-Clause.txt) licenses.
 Directory LICENCES contains the license texts.
 SPDX License Identifiers can be found in source files.
 
