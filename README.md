@@ -4,6 +4,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/topimiettinen/libaslrmalloc/badge.svg?branch=master)](https://coveralls.io/github/topimiettinen/libaslrmalloc?branch=master)
 [![lgtm alerts](https://img.shields.io/lgtm/alerts/g/topimiettinen/libaslrmalloc.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/topimiettinen/libaslrmalloc/alerts/)
 [![lgtm language grade: C/C++](https://img.shields.io/lgtm/grade/cpp/g/topimiettinen/libaslrmalloc.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/topimiettinen/libaslrmalloc/context:cpp)
+[![OpenSSF Best Practices](https://bestpractices.coreinfrastructure.org/projects/6732/badge)](https://bestpractices.coreinfrastructure.org/projects/6732)
 
 `libaslrmalloc` is a LD_PRELOADed library which replaces `malloc()` and other memory allocation functions from C library.
 The main design goal is not performance or memory consumption but to increase address space
