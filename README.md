@@ -2,8 +2,6 @@
 [![Build CI](https://github.com/topimiettinen/libaslrmalloc/workflows/GitHub%20CI/badge.svg)](https://github.com/topimiettinen/libaslrmalloc/actions?query=workflow%3A%22GitHub+CI%22)
 [![CodeQL](https://github.com/topimiettinen/libaslrmalloc/workflows/CodeQL/badge.svg)](https://github.com/topimiettinen/libaslrmalloc/actions?query=workflow%3ACodeQL)
 [![Coverage Status](https://coveralls.io/repos/github/topimiettinen/libaslrmalloc/badge.svg?branch=master)](https://coveralls.io/github/topimiettinen/libaslrmalloc?branch=master)
-[![lgtm alerts](https://img.shields.io/lgtm/alerts/g/topimiettinen/libaslrmalloc.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/topimiettinen/libaslrmalloc/alerts/)
-[![lgtm language grade: C/C++](https://img.shields.io/lgtm/grade/cpp/g/topimiettinen/libaslrmalloc.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/topimiettinen/libaslrmalloc/context:cpp)
 [![OpenSSF Best Practices](https://bestpractices.coreinfrastructure.org/projects/6732/badge)](https://bestpractices.coreinfrastructure.org/projects/6732)
 [![OpenSSF
 Scorecard](https://api.securityscorecards.dev/projects/github.com/{owner}/{repo}/badge)](https://api.securityscorecards.dev/projects/github.com/{owner}/{repo})
