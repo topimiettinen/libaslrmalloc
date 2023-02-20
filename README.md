@@ -1,10 +1,11 @@
 # libaslrmalloc
 [![Build CI](https://github.com/topimiettinen/libaslrmalloc/workflows/GitHub%20CI/badge.svg)](https://github.com/topimiettinen/libaslrmalloc/actions?query=workflow%3A%22GitHub+CI%22)
+[![CodeFactor](https://www.codefactor.io/repository/github/topimiettinen/libaslrmalloc/badge)](https://www.codefactor.io/repository/github/topimiettinen/libaslrmalloc)
 [![CodeQL](https://github.com/topimiettinen/libaslrmalloc/workflows/CodeQL/badge.svg)](https://github.com/topimiettinen/libaslrmalloc/actions?query=workflow%3ACodeQL)
 [![Coverage Status](https://coveralls.io/repos/github/topimiettinen/libaslrmalloc/badge.svg?branch=master)](https://coveralls.io/github/topimiettinen/libaslrmalloc?branch=master)
 [![OpenSSF Best Practices](https://bestpractices.coreinfrastructure.org/projects/6732/badge)](https://bestpractices.coreinfrastructure.org/projects/6732)
 [![OpenSSF
-Scorecard](https://api.securityscorecards.dev/projects/github.com/{owner}/{repo}/badge)](https://api.securityscorecards.dev/projects/github.com/{owner}/{repo})
+Scorecard](https://api.securityscorecards.dev/projects/github.com/topimiettinen/libaslrmalloc/badge)](https://api.securityscorecards.dev/projects/github.com/topimiettinen/libaslrmalloc)
 
 `libaslrmalloc` is a LD_PRELOADed library which replaces `malloc()` and other memory allocation functions from C library.
 The main design goal is not performance or memory consumption but to increase address space
