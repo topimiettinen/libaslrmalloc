@@ -437,7 +437,7 @@ static bool bitmap_is_empty(const unsigned long *bitmap,
 */
 static void *ptr_to_offset_in_page(void *page, unsigned int size_index, int num) {
 	assert(size_index <= MAX_SIZE_CLASSES);
-	unsigned long offset = (1 << (size_index + MIN_ALLOC_BITS)) * num;
+	unsigned long offset = (1UL << (size_index + MIN_ALLOC_BITS)) * (unsigned long)num;
 	unsigned long address = ((unsigned long)page) + offset;
 	DPRINTF("offsetting page %p size index %u (0x%x) item number "
 		"%d -> 0x%lx\n",
