@@ -27,12 +27,16 @@ jobs:
       fail-fast: false
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@8ca2b8b2ece13480cda6dacd3511b49857a23c09
+        uses: step-security/harden-runner@8ca2b8b2ece13480cda6dacd3511b49857a23c09 # v2.5.1
         with:
-          egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            azure.archive.ubuntu.com:80
+            github.com:443
 
       - name: Checkout
-        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
       - name: Install packages
         run: sudo apt-get install build-essential gcc clang meson lcov
       - name: Setup
@@ -44,7 +48,7 @@ jobs:
       - name: Coverage
         run: ninja -C builddir/ coverage
       - name: Coveralls GitHub Action
-        uses: coverallsapp/github-action@95b1a2355bd0e526ad2fd62da9fd386ad4c98474
+        uses: coverallsapp/github-action@95b1a2355bd0e526ad2fd62da9fd386ad4c98474 # v2.2.1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path-to-lcov: builddir/meson-logs/coverage.info
