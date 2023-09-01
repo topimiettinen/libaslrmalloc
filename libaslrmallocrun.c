@@ -25,10 +25,10 @@ int main(int argc, char *argv[]) {
 	char *new_ld_preload = LIBASLRMALLOC;
 	/* Flawfinder: ignore */
 	const char *ld_preload = getenv("LD_PRELOAD");
-	if (ld_preload != NULL) {
-		if (asprintf(&new_ld_preload, "%s %s", ld_preload, LIBASLRMALLOC) == -1)
+	if (ld_preload != NULL &&
+	    asprintf(&new_ld_preload, "%s %s", ld_preload, LIBASLRMALLOC) == -1)
 			abort();
-	}
+
 	if (setenv("LD_PRELOAD", new_ld_preload, 1) != 0)
 		abort();
 

@@ -310,7 +310,7 @@ static unsigned int last_index(size_t size) {
 static unsigned int align_up_size(size_t size) {
 	for (unsigned int index = MIN_ALLOC_BITS; index < PAGE_BITS; index++)
 		if (size <= (1UL << index))
-			return 1UL << index;
+			return 1U << index;
 	abort();
 }
 
@@ -323,7 +323,7 @@ static unsigned int bitmap_bits(size_t size) {
 
 
 // Get a bit from bitmap.
-static int bitmap_bit(unsigned long *bitmap, unsigned int bit) {
+static int bitmap_bit(const unsigned long *bitmap, unsigned int bit) {
 	return !!(bitmap[bit >> ULONG_BITS] & (1UL << (bit & ~ULONG_MASK)));
 }
 
@@ -470,8 +470,8 @@ static void pagetables_dump(const char *label) {
 				".rnd=%lx bm=",
 				label, i, p, count, p->page,
 				p->access_randomizer_state);
-			for (int i = 0; i < BITMAP_ULONGS; i++)
-				DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
+			for (unsigned int j = 0; j < BITMAP_ULONGS; j++)
+				DPRINTF_NOPREFIX("%lx ", p->bitmap[j]);
 			DPRINTF_NOPREFIX("\n");
 		}
 	}
@@ -491,8 +491,8 @@ static void pagetables_dump(const char *label) {
 						".rnd=%lx bm=",
 						label, i, j, p, count, p->page,
 						p->access_randomizer_state);
-					for (int i = 0; i < BITMAP_ULONGS; i++)
-						DPRINTF_NOPREFIX("%lx ", p->bitmap[i]);
+					for (int k = 0; k < BITMAP_ULONGS; k++)
+						DPRINTF_NOPREFIX("%lx ", p->bitmap[k]);
 					DPRINTF_NOPREFIX("\n");
 				}
 			}
