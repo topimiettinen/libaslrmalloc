@@ -20,7 +20,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
     - name: Install packages
-      run: sudo apt-get install build-essential gcc clang meson lcov
+      run: sudo apt-get install build-essential gcc clang meson gcovr
     - name: Setup
       run: meson setup builddir/ -Db_coverage=true
     - name: Install sonar-scanner and build-wrapper
@@ -30,9 +30,9 @@ jobs:
     - name: Test
       run: meson test -C builddir/ -v
     - name: Coverage
-      run: ninja -C builddir/ coverage
+      run: gcovr --sonarqube > coverage.xml
     - name: Run sonar-scanner
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      run: sonar-scanner --define sonar.cfamily.build-wrapper-output="${{ env.BUILD_WRAPPER_OUT_DIR }}" --define sonar.cfamily.gcov.reportsPath=builddir/meson-logs #Consult https://docs.sonarcloud.io/advanced-setup/ci-based-analysis/sonarscanner-cli/ for more information and options
+      run: sonar-scanner --define sonar.cfamily.build-wrapper-output="${{ env.BUILD_WRAPPER_OUT_DIR }}" --define sonar.coverageReportPaths=coverage.xml #Consult https://docs.sonarcloud.io/advanced-setup/ci-based-analysis/sonarscanner-cli/ for more information and options
