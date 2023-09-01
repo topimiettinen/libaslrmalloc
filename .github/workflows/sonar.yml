@@ -26,9 +26,9 @@ jobs:
     - name: Setup
       run: meson setup builddir/ 
     - name: Run build-wrapper
-      run: ${BUILD_WRAPPER_BIN} --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} meson compile -C builddir/ -v
+      run: ${{ env.BUILD_WRAPPER_BIN }} --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} meson compile -C builddir/ -v
     - name: Run sonar-scanner
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      run: sonar-scanner --define sonar.cfamily.build-wrapper-output="${{ env.BUILD_WRAPPER_OUT_DIR }}" #Consult https://docs.sonarcloud.io/advanced-setup/ci-based-analysis/sonarscanner-cli/ for more information and options
+      run: ${{ env.SONAR_SCANNER_BIN }} --define sonar.cfamily.build-wrapper-output="${{ env.BUILD_WRAPPER_OUT_DIR }}" #Consult https://docs.sonarcloud.io/advanced-setup/ci-based-analysis/sonarscanner-cli/ for more information and options
