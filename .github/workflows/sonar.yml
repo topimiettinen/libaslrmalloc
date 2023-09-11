@@ -24,7 +24,7 @@ jobs:
         # Disabling shallow clone is recommended for improving relevancy of reporting
         fetch-depth: 0
     - name: Install packages
-      run: sudo apt-get install build-essential gcc clang meson gcovr
+      run: sudo apt-get install build-essential gcc clang meson python3
     - name: Setup
       run: meson setup builddir/ -Db_coverage=true
     - name: install gcovr 5.0
