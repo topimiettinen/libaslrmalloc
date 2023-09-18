@@ -46,5 +46,5 @@ jobs:
       - name: Test
         run: meson test -C builddir/ -v
       - name Scan-build
-        if: ${{ matrix.env.CC == 'clang' }}
+        # if: ${{ matrix.env.CC == 'clang' }}
         run: ninja -C builddir/ scan-build
