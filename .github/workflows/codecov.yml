@@ -23,11 +23,11 @@ jobs:
     - name: Test
       run: meson test -C builddir/ -v
     - name: Coverage
-      run: gcovr --object-directory=builddir/ > coverage.txt
+      run: gcovr --object-directory=builddir/ > builddir/meson-logs/coverage.txt
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@4fe8c5f003fae66aa5ebb77cfd3e7bfbbda0b6b0 # v3.1.5
       with:
-        directory: ./builddir/
+        directory: ./builddir/meson-logs/
         verbose: true
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
