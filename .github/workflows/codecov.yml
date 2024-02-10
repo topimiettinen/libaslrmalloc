@@ -24,6 +24,8 @@ jobs:
       run: meson setup builddir/ -Db_coverage=true
     - name: Test
       run: meson test -C builddir/ -v
+    - name: Coverage
+      run: ninja coverage -C builddir/ -v
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@e0b68c6749509c5f83f984dd99a76a1c1a231044 # v4.0.1
       with:
