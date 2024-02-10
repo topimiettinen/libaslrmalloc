@@ -2,6 +2,8 @@
 [![Build CI](https://github.com/topimiettinen/libaslrmalloc/workflows/GitHub%20CI/badge.svg)](https://github.com/topimiettinen/libaslrmalloc/actions?query=workflow%3A%22GitHub+CI%22)
 [![CodeFactor](https://www.codefactor.io/repository/github/topimiettinen/libaslrmalloc/badge)](https://www.codefactor.io/repository/github/topimiettinen/libaslrmalloc)
 [![CodeQL](https://github.com/topimiettinen/libaslrmalloc/workflows/CodeQL/badge.svg)](https://github.com/topimiettinen/libaslrmalloc/actions?query=workflow%3ACodeQL)
+[![codecov](https://codecov.io/github/topimiettinen/libaslrmalloc/graph/badge.svg?token=VGUPZCO4N4)](https://codecov.io/github/topimiettinen/libaslrmalloc)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=topimiettinen_libaslrmalloc&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=topimiettinen_libaslrmalloc)
 [![OpenSSF Best Practices](https://bestpractices.coreinfrastructure.org/projects/6732/badge)](https://bestpractices.coreinfrastructure.org/projects/6732)
 [![OpenSSF
 Scorecard](https://api.securityscorecards.dev/projects/github.com/topimiettinen/libaslrmalloc/badge)](https://securityscorecards.dev/viewer/?platform=github.com&org=topimiettinen&repo=libaslrmalloc)
