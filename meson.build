@@ -129,5 +129,5 @@ test_9 = executable('test_9',
   link_with: libaslrmalloc,
 )
 test('test_9a', test_9, args: ['cat', '/proc/self/maps'])
-test('test_9b', test_9, should_fail=true)
+test('test_9b', test_9, args: [], should_fail=true)
 test('test_9c', test_9, args: ['/doesnotexist'], should_fail=true)
