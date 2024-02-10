@@ -25,11 +25,11 @@ jobs:
         fetch-depth: 0
     - name: Install packages
       run: sudo apt-get install build-essential gcc clang meson python3
-    - name: Setup
-      run: meson setup builddir/ -Db_coverage=true
-    - name: install gcovr 5.0
+    - name: Install gcovr 5.0
       run: |
         pip install gcovr==5.0 # 5.1 is not supported
+    - name: Setup
+      run: meson setup builddir/ -Db_coverage=true
     - name: Install sonar-scanner and build-wrapper
       uses: sonarsource/sonarcloud-github-c-cpp@e4882e1621ad2fb48dddfa48287411bed34789b1 # v2.0.2
     - name: Run build-wrapper
@@ -37,7 +37,9 @@ jobs:
     - name: Test
       run: meson test -C builddir/ -v
     - name: Coverage
-      run: gcovr --sonarqube > builddir/coverage.xml
+      run: |
+        ninja coverage -C builddir/ -v
+        gcovr --sonarqube > builddir/coverage.xml
     - name: Run sonar-scanner
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
