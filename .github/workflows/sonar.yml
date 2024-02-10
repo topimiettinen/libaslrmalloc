@@ -37,7 +37,9 @@ jobs:
     - name: Test
       run: meson test -C builddir/ -v
     - name: Coverage
-      run: ninja coverage -C builddir/ -v
+      run: |
+        ninja coverage -C builddir/ -v
+        gcovr --sonarqube > builddir/coverage.xml
     - name: Run sonar-scanner
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
