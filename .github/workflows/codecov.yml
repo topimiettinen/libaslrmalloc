@@ -18,6 +18,8 @@ jobs:
         fetch-depth: 0
     - name: Install packages
       run: sudo apt-get install build-essential gcc clang meson python3 gcovr
+    - name: Install Python packages
+      run: python3 -m pip install coverage
     - name: Setup
       run: meson setup builddir/ -Db_coverage=true
     - name: Test
