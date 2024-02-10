@@ -128,4 +128,6 @@ test_9 = executable('test_9',
   c_args: '-DLIBASLRMALLOC="@0@"'.format(libaslrmalloc.full_path()),
   link_with: libaslrmalloc,
 )
-test('test_9', test_9, args: ['cat', '/proc/self/maps'])
+test('test_9a', test_9, args: ['cat', '/proc/self/maps'])
+test('test_9b', test_9, should_fail: true, args: [])
+test('test_9c', test_9, should_fail: true, args: ['/doesnotexist'])
