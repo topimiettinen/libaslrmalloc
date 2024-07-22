@@ -35,7 +35,7 @@ jobs:
     - name: Setup
       run: meson setup builddir/ -Db_coverage=true
     - name: Install sonar-scanner and build-wrapper
-      uses: sonarsource/sonarcloud-github-c-cpp@e4882e1621ad2fb48dddfa48287411bed34789b1 # v2.0.2
+      uses: sonarsource/sonarcloud-github-c-cpp@816b1822d71776ee0d32bc012e95024ec52ac1fc # v3.1.0
     - name: Run build-wrapper
       run: build-wrapper-linux-x86-64 --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} meson compile -C builddir/ -v
     - name: Test
